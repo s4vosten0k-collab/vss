@@ -75,7 +75,7 @@ function resolveDataPath(envKey, defRel, legacyRel) {
 const PORT = Number(process.env.PORT ?? process.env.ASSISTANT_PORT ?? 8787);
 const HOST = process.env.ASSISTANT_HOST ?? "127.0.0.1";
 /** Увеличивайте при значимых правках `assistant/server.mjs`; сверяйте с полем в GET `/health` после деплоя. */
-const ASSISTANT_SERVER_REVISION = 16;
+const ASSISTANT_SERVER_REVISION = 17;
 const KNOWLEDGE_BASE_PATH = resolveDataPath("KNOWLEDGE_BASE_PATH", EPBT_DEFAULT, EPBT_LEGACY);
 const MEDICINE_KNOWLEDGE_PATH = resolveDataPath("MEDICINE_KNOWLEDGE_PATH", MED_DEFAULT, MED_LEGACY);
 const MEDICINE_DOCUMENT_LABEL = "Мед. справочник (болезни)";
@@ -191,23 +191,83 @@ function tokenize(value) {
     .filter((token) => token.length > 2 && !RUSSIAN_STOP_WORDS.has(token));
 }
 
-function scoreChunk(questionTokens, chunk) {
+/**
+ * Подмешивание «синонимов» к скорингу, если в вопросе нет буквальной формулировки из статьи
+ * (иначе токен-матч=0 и все мед. чанки сводятся к одному medicineBonus → выигрывает первая статья в JSON).
+ * @param {string} question
+ * @returns {string[]}
+ */
+function medicineScoringQueryAugment(question) {
+  const n = applyDiverTypoTolerant(normalizeText(question));
+  /** @type {string[]} */
+  const extra = [];
+  if (/\bгипокс|\bанокс|недостат(ок|ка)\s+кислород|о[\s-]*2|кислородн(ая|ой|ого|ое)?\s+недостат/i.test(n)) {
+    if (!n.includes("кислородн") && !n.includes("голодан")) {
+      extra.push("кислородное", "голодание", "кислород", "кислородн");
+    }
+  }
+  if (n.includes("отравл") && n.includes("кислород") && !n.includes("отравление кислородом")) {
+    extra.push("отравлен", "кислород", "токсич");
+  }
+  return extra;
+}
+
+/**
+ * @param {string[]} baseTokens — для фразового бонуса (только оригинал вопроса)
+ * @param {string[]} allTokens — совпадения по токенам (оригинал + подмес)
+ * @param {KnowledgeChunk} chunk
+ */
+function scoreChunk(baseTokens, allTokens, chunk) {
   const text = `${chunk.document} ${chunk.section ?? ""} ${chunk.point ?? ""} ${chunk.text}`;
   const normalized = normalizeText(text);
   let score = 0;
 
-  for (const token of questionTokens) {
+  const uniq = [...new Set(allTokens)];
+  for (const token of uniq) {
     if (normalized.includes(token)) {
       score += 2;
     }
   }
 
-  const phrase = questionTokens.join(" ");
+  const phrase = baseTokens.join(" ");
   if (phrase && normalized.includes(phrase)) {
     score += 3;
   }
 
   return score;
+}
+
+/**
+ * Совпадение вопроса с **названием статьи** (section) / подписью фрагмента — снимает ничьи «все +один бонус».
+ * @param {string} question
+ * @param {KnowledgeChunk} chunk
+ */
+function medSectionRelevanceBonus(question, chunk) {
+  if (!isMedicineChunk(chunk)) {
+    return 0;
+  }
+  const q = applyDiverTypoTolerant(normalizeText(question));
+  const head = applyDiverTypoTolerant(normalizeText(`${chunk.section ?? ""} ${chunk.point ?? ""}`));
+  if (!q.length || !head.length) {
+    return 0;
+  }
+  let b = 0;
+  for (const w of q.split(" ")) {
+    if (w.length < 3) {
+      continue;
+    }
+    if (head.includes(w)) {
+      b += 5;
+    }
+    if (w.length >= 6 && head.includes(w)) {
+      b += 4;
+    }
+  }
+  const sec = applyDiverTypoTolerant(normalizeText(chunk.section || ""));
+  if (sec && (q === sec || q.includes(sec) || sec.includes(q))) {
+    b += 20;
+  }
+  return Math.min(56, b);
 }
 
 function hasEmergencyHelpIntent(question) {
@@ -397,27 +457,75 @@ function isMedicineChunk(chunk) {
   return String(chunk.document ?? "").includes("Мед.") || String(chunk.document ?? "").toLowerCase().includes("мед.");
 }
 
+/**
+ * Слабый «бейслайн» для мед. чанка при явном мед. вопросе. Ранее +6 к **каждому** фрагменту —
+ * при нулевом токен-матче все шли вничью и выигрывала **первая** статья (декомпрессия).
+ */
 function medicineBonus(chunk, question) {
   if (!isMedicineChunk(chunk) || !hasMedicineIntent(question)) {
     return 0;
   }
-  return 6;
+  return 2;
+}
+
+function tieBreakRelevance(a, b, question) {
+  const s =
+    medSectionRelevanceBonus(question, b.chunk) - medSectionRelevanceBonus(question, a.chunk);
+  if (s !== 0) {
+    return s;
+  }
+  return String(a.chunk.id).localeCompare(String(b.chunk.id), "ru");
+}
+
+/**
+ * @param {{ chunk: KnowledgeChunk; score: number }} a
+ * @param {{ chunk: KnowledgeChunk; score: number }} b
+ */
+function compareScoredAttribution(a, b, question) {
+  if (b.score !== a.score) {
+    return b.score - a.score;
+  }
+  return tieBreakRelevance(a, b, question);
+}
+
+/**
+ * Когда у всех кандидатов score=0, не брать `chunks[0]` (почти всегда произвольный фрагмент).
+ * @param {string} question
+ * @param {KnowledgeChunk[]} chunks
+ * @returns {KnowledgeChunk}
+ */
+function bestChunkWhenNoPositiveScore(question, chunks) {
+  if (hasMedicineIntent(question)) {
+    const med = chunks.filter(isMedicineChunk);
+    if (med.length) {
+      return med
+        .map((c) => ({ c, s: medSectionRelevanceBonus(question, c) }))
+        .sort(
+          (a, b) =>
+            b.s - a.s || String(a.c.id).localeCompare(String(b.c.id), "ru"),
+        )[0].c;
+    }
+  }
+  return chunks[0];
 }
 
 /** Тот же вес, что и в selectPrimarySources / retrieveChunks — для решения, показывать ли ссылки. */
 function sourceAttachmentScore(question, chunk) {
-  const questionTokens = tokenize(question);
+  const baseTokens = tokenize(question);
+  const extra = hasMedicineIntent(question) ? medicineScoringQueryAugment(question) : [];
+  const allTokens = [...new Set([...baseTokens, ...extra])];
   return (
-    scoreChunk(questionTokens, chunk) +
+    scoreChunk(baseTokens, allTokens, chunk) +
     (hasEmergencyHelpIntent(question) ? emergencyBonus(chunk) : 0) +
     (hasProcedureIntent(question) ? procedureBonus(chunk) : 0) +
-    medicineBonus(chunk, question)
+    medicineBonus(chunk, question) +
+    medSectionRelevanceBonus(question, chunk)
   );
 }
 
 /**
- * Когда прикреплять `sources` и строчку «Источник: …» в теле ответа.
- * Если ретривер уже отобрал чанки (есть primary) — всегда отдаём источники и ссылки в UI.
+ * Когда прикреплять `sources` в API.
+ * Строка «Источник: …» в **теле** ответа не требуется — источники в UI.
  */
 function shouldIncludeSourcesInResponse(question, primarySources) {
   return primarySources.length > 0;
@@ -440,6 +548,29 @@ function sourceAttributionLine(chunk) {
 }
 
 /**
+ * Удаляет из текста ответа модели хвостовую строку «Источник: …» (дублирует блок источников в API).
+ * @param {string} text
+ * @returns {string}
+ */
+function stripAnswerInlineSourceAttribution(text) {
+  if (!text) return text;
+  const lines = text.split(/\r?\n/);
+  while (lines.length) {
+    const last = lines[lines.length - 1].trim();
+    if (last === "") {
+      lines.pop();
+      continue;
+    }
+    if (/^Источник\s*:/i.test(last)) {
+      lines.pop();
+      continue;
+    }
+    break;
+  }
+  return lines.join("\n").trim();
+}
+
+/**
  * Цитаты для UI: по мед. вопросу — лучший фрагмент **по всей** базе справочника, иначе в топ-4 RAG
  * часто только ЕПБТ, и ссылка «медицина» пропадала.
  * @param {string} question
@@ -452,7 +583,7 @@ function buildCitationPayload(question, chunks) {
     if (allMed.length) {
       const scored = allMed
         .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => compareScoredAttribution(a, b, question));
       const top = scored[0].chunk;
       return {
         citation: sourceAttributionLine(top),
@@ -501,9 +632,9 @@ function pickAttributionChunk(question, chunks) {
   const scored = chunks
     .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => compareScoredAttribution(a, b, question));
 
-  const bestAny = scored.length ? scored[0].chunk : chunks[0];
+  const bestAny = scored.length ? scored[0].chunk : bestChunkWhenNoPositiveScore(question, chunks);
 
   if (hasMedicineIntent(question)) {
     const medScored = scored.filter((item) => isMedicineChunk(item.chunk));
@@ -515,7 +646,7 @@ function pickAttributionChunk(question, chunks) {
     if (medOnly.length) {
       return medOnly
         .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
-        .sort((a, b) => b.score - a.score)[0].chunk;
+        .sort((a, b) => compareScoredAttribution(a, b, question))[0].chunk;
     }
   }
 
@@ -611,7 +742,7 @@ function retrieveChunks(question, limit = 6) {
   if (isMedicineDefinitionCorpusQuery(question) && medOnly.length) {
     const scored = medOnly
       .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => compareScoredAttribution(a, b, question));
     return scored.map((item) => item.chunk).slice(0, limit);
   }
 
@@ -621,17 +752,10 @@ function retrieveChunks(question, limit = 6) {
     return medIntent ? medOnly.slice(0, limit) : [];
   }
 
-  const emergencyIntent = hasEmergencyHelpIntent(question);
-  const procedureIntent = hasProcedureIntent(question);
-
-  const scored = knowledgeBase.map((chunk) => {
-    const baseScore = scoreChunk(tokens, chunk);
-    let score = baseScore;
-    if (emergencyIntent) score += emergencyBonus(chunk);
-    if (procedureIntent) score += procedureBonus(chunk);
-    score += medicineBonus(chunk, question);
-    return { chunk, score };
-  });
+  const scored = knowledgeBase.map((chunk) => ({
+    chunk,
+    score: sourceAttachmentScore(question, chunk),
+  }));
 
   const positive = scored.filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
   if (positive.length) {
@@ -640,7 +764,7 @@ function retrieveChunks(question, limit = 6) {
     if (medIntent) {
       const medFromAll = scored
         .filter((item) => isMedicineChunk(item.chunk))
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => compareScoredAttribution(a, b, question));
       const seen = new Set(out.map((c) => c.id));
       const pref = [];
       for (const item of medFromAll) {
@@ -658,7 +782,7 @@ function retrieveChunks(question, limit = 6) {
       if (medOnly.length && out.length && out.every((c) => !isMedicineChunk(c))) {
         const scoredM = medOnly
           .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
-          .sort((a, b) => b.score - a.score);
+          .sort((a, b) => compareScoredAttribution(a, b, question));
         out = scoredM.map((x) => x.chunk).slice(0, limit);
       }
     }
@@ -669,14 +793,17 @@ function retrieveChunks(question, limit = 6) {
   if (medIntent) {
     const medScored = scored
       .filter((item) => isMedicineChunk(item.chunk))
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => compareScoredAttribution(a, b, question));
     if (medScored.length) {
       return medScored.slice(0, limit).map((item) => item.chunk);
     }
     return knowledgeBase.filter(isMedicineChunk).slice(0, limit);
   }
 
-  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((item) => item.chunk);
+  return scored
+    .sort((a, b) => compareScoredAttribution(a, b, question))
+    .slice(0, limit)
+    .map((item) => item.chunk);
 }
 
 function selectPrimarySources(question, chunks, maxSources = 2) {
@@ -685,20 +812,14 @@ function selectPrimarySources(question, chunks, maxSources = 2) {
   }
 
   const emergencyIntent = hasEmergencyHelpIntent(question);
-  const procedureIntent = hasProcedureIntent(question);
   const effectiveMaxSources = emergencyIntent ? 1 : maxSources;
-  const questionTokens = tokenize(question);
   const scored = chunks
     .map((chunk) => ({
       chunk,
-      score:
-        scoreChunk(questionTokens, chunk) +
-        (emergencyIntent ? emergencyBonus(chunk) : 0) +
-        (procedureIntent ? procedureBonus(chunk) : 0) +
-        medicineBonus(chunk, question),
+      score: sourceAttachmentScore(question, chunk),
     }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => compareScoredAttribution(a, b, question));
 
   if (!scored.length) {
     return chunks.slice(0, 1);
@@ -735,18 +856,13 @@ function selectSourceReferences(question, chunks, maxRefs = 4) {
 
   const emergencyIntent = hasEmergencyHelpIntent(question);
   const procedureIntent = hasProcedureIntent(question);
-  const questionTokens = tokenize(question);
   const scored = chunks
-    .map((chunk) => {
-      const baseScore = scoreChunk(questionTokens, chunk);
-      let score = baseScore;
-      if (emergencyIntent) score += emergencyBonus(chunk);
-      if (procedureIntent) score += procedureBonus(chunk);
-      score += medicineBonus(chunk, question);
-      return { chunk, score };
-    })
+    .map((chunk) => ({
+      chunk,
+      score: sourceAttachmentScore(question, chunk),
+    }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => compareScoredAttribution(a, b, question));
 
   if (!scored.length) {
     return chunks.slice(0, 1);
@@ -1037,12 +1153,12 @@ ${context}`
 ${sourceInstruction}
 
 Сформируй ответ как цельный, короткий и понятный текст без секций/заголовков.
-В самом конце на отдельной строке кратко укажи опору по источникам: одна строка «Источник: <как в поле Документ> — <Раздел/статья> — <Пункт/фрагмент>» — по тому фрагменту, на котором основан ответ. Если вопрос о болезни, симптомах, лечении, диагнозе — укажи в строке «Источник» фрагмент из справочника болезней (не ЕПБТ), если в контексте есть такой фрагмент. URL и markdown-ссылки в тексте не пиши.
+Не добавляй в конец отдельной строки «Источник: …» и не перечисляй пункты/фрагменты как подпись — источники передаются в интерфейсе отдельно. URL и markdown-ссылки в тексте не пиши.
 Если вопрос про порядок проведения работ, отвечай строго по схеме: кто назначается -> подготовка до спуска -> проведение -> контроль/документы.
 Если вопрос про ответственных, обязательно назови конкретные роли, но только если они подтверждены источником.
 Не давай общих определений, если вопрос про порядок/ответственных.
 Не добавляй отдельную строку только из эмодзи и не ставь эмодзи отдельным хвостом в конце ответа.
-Ограничения: не более 650 символов основного объяснения; строка «Источник:» может идти сразу после и не сильно удлиняет ответ. Без markdown-таблиц, без длинных цитат, без повторов вопроса.`;
+Ограничения: не более 650 символов. Без markdown-таблиц, без длинных цитат, без повторов вопроса.`;
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -1081,7 +1197,7 @@ ${sourceInstruction}
   const cite = buildCitationPayload(question, chunks);
 
   return {
-    answer: answer.trim(),
+    answer: stripAnswerInlineSourceAttribution(answer.trim()),
     sources: shouldAttachSources ? buildSources(question, chunks) : [],
     citation: cite.citation,
     sourceUrl: cite.sourceUrl,
