@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
-import { Activity, ArrowRight, Bot, ClipboardList, Radio, ScrollText, ShieldAlert } from "lucide-react";
+import { Activity, ArrowRight, Bot, ClipboardCheck, ClipboardList, Radio, ScrollText, ShieldAlert, Stethoscope } from "lucide-react";
 import { BottomNav, type TabConfig, type TabKey } from "@/components/bottom-nav";
 import { Header } from "@/components/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,9 @@ const tabs: TabConfig[] = [
   { key: "duties", label: "Обязанности", icon: ClipboardList },
   { key: "callsigns", label: "Позывные", icon: Radio },
   { key: "signals", label: "Сигналы", icon: Activity },
-  { key: "assistant", label: "Помощник", icon: Bot },
+  { key: "medicine", label: "Медицина", icon: Stethoscope },
+  { key: "tests", label: "Тесты", icon: ClipboardCheck },
+  { key: "assistant", label: "Павлик", icon: Bot },
   { key: "epbt", label: "Епбт", icon: ShieldAlert },
 ];
 

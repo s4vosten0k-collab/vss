@@ -23,9 +23,24 @@ export const viewport: Viewport = {
   themeColor: "#0B1220",
 };
 
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline' https:",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "manifest-src 'self'",
+  "connect-src 'self' https: wss: http://127.0.0.1:8787 http://localhost:8787",
+].join("; ");
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ru" className="dark">
+      <head>
+        <meta httpEquiv="Content-Security-Policy" content={CSP} />
+      </head>
       <body className={`${inter.variable} font-sans`}>{children}</body>
     </html>
   );

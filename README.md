@@ -28,20 +28,22 @@ npm run dev
 - `/handbook/?tab=duties`
 - `/handbook/?tab=callsigns`
 - `/handbook/?tab=signals`
+- `/handbook/?tab=medicine`
+- `/handbook/?tab=tests`
 - `/handbook/?tab=assistant`
 - `/handbook/?tab=epbt`
 
-## Помощник (RAG по документам)
+## Павлик — помощник по ЕПБТ (RAG)
 
-Вкладка `Помощник` подключается к отдельному API-сервису, который:
-- ищет релевантные фрагменты в `public/docs/epbt-structured.json` (только ЕПБТ),
+Вкладка **Павлик** (`?tab=assistant`) подключается к отдельному API-сервису, который:
+- ищет релевантные фрагменты в `public/assistant-sources/epbt/epbt-structured.json` (ЕПБТ) и `public/assistant-sources/medicine/medicine-blocks.json` (мед. справочник),
 - формирует ответ по найденным данным,
 - возвращает подтверждающие источники (документ, раздел, пункт, цитата).
 
-### Локальный запуск помощника
+### Локальный запуск API для Павлика
 
 1. Скопируйте `.env.example` в `.env.local` и при необходимости измените значения.
-2. Запустите API помощника:
+2. Запустите backend:
 
    ```bash
    npm run assistant:dev
@@ -68,29 +70,58 @@ curl http://127.0.0.1:8787/health
 
 ## Сборка для хостинга
 
-Проект настроен как статический (`output: "export"`), поэтому после сборки получается папка `out`, готовая для обычного shared-хостинга.
+Проект — статический экспорт (`output: "export"`), публикуется папка `out` (корень веб-директории, без Node.js на сервере).
+
+### Быстрый чек перед выкладкой
 
 ```bash
 npm install
-npm run build
+npm run hosting:check
 ```
 
-После этого публикуется содержимое папки `out`.
-Для вкладки `Помощник` на хостинге нужен отдельный доступный API URL (укажите его в `NEXT_PUBLIC_ASSISTANT_API_URL` при сборке).
+Проверяет линт и чистую сборку `next build`.
+
+### Сборка с патчем под Apache (SprintHost и аналоги)
+
+На части shared-хостингов папка `_next` может блокироваться. Скрипт переименует её в `next-assets` и допишет `.htaccess`.
+
+```bash
+# Задайте URL API Павлика (см. .env.production.example), затем:
+npm run hosting:build
+# или: npm run export:shared-hosting
+```
+
+Публикуйте **содержимое** папки `out` (файл `.htaccess` в корне `out` тоже нужен).
+
+### Переменные при сборке
+
+- **`NEXT_PUBLIC_ASSISTANT_API_URL`** — публичный URL API (тот же endpoint `/assistant`). Задайте в `.env.production.local` (шаблон: `.env.production.example`) или в CI **до** `npm run build`, иначе во фронт попадёт `localhost` и Павлик на сайте не подключится.
+- **`NEXT_PUBLIC_BASE_PATH`** — только если сайт в подкаталоге, например `https://домен/vss/`: значение `vss` без слэшей.
+
+### Архив для загрузки (Windows, PowerShell)
+
+После `npm run hosting:build` в каталоге проекта:
+
+```powershell
+Compress-Archive -Path (Join-Path (Get-Location) "out\*") -DestinationPath (Join-Path (Get-Location) "deploy-out.zip") -Force
+```
+
+Получится `deploy-out.zip` (в `.gitignore`), распакуйте в web-каталог на хостинге.
 
 ## SprintHost: как залить сайт
 
-1. В панели SprintHost откройте сайт/домен, куда хотите загрузить проект.
-2. Откройте файловый менеджер и перейдите в корневую web-папку домена (обычно `public_html` или `www`).
-3. Удалите старое содержимое сайта (если оно не нужно).
-4. Локально в проекте выполните:
+1. Скопируйте `.env.production.example` в `.env.production.local` и укажите `NEXT_PUBLIC_ASSISTANT_API_URL` на ваш API.
+2. В панели SprintHost откройте сайт/домен, куда хотите загрузить проект.
+3. Откройте файловый менеджер и перейдите в корневую web-папку домена (обычно `public_html` или `www`).
+4. Удалите старое содержимое сайта (если оно не нужно).
+5. Локально в проекте выполните:
 
    ```bash
    npm install
-   npm run build
+   npm run hosting:build
    ```
 
-5. Загрузите **содержимое** папки `out` в web-папку домена (именно содержимое, не саму папку `out`).
-6. Проверьте сайт по домену: главная страница и `/handbook/` должны открываться без сервера Node.js.
+6. Загрузите **содержимое** папки `out` в web-папку домена (вместе с `.htaccess` в корне; не загружайте пустой каталог `out` как одну папку без файлов).
+7. Проверьте сайт: главная и `/handbook/` должны открываться без Node.js на сервере.
 
-Если после обновления не видно изменений, очистите кэш браузера (Ctrl+F5) и, при наличии, кэш CDN в панели хостинга.
+Подробнее: [DEPLOY_SPRINTHOST.md](DEPLOY_SPRINTHOST.md). Если после обновления не видно изменений — сброс кэша браузера (Ctrl+F5) и, при необходимости, CDN в панели.

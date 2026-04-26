@@ -16,6 +16,8 @@
   --border: 222 21% 25%;
   --input: 222 21% 24%;
   --ring: 22 93% 54%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
 }
 
 * {

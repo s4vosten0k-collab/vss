@@ -39,7 +39,7 @@ export function EpbtPage() {
       }
 
       try {
-        const response = await fetch("/docs/epbt-structured.json", { cache: "force-cache" });
+        const response = await fetch("/assistant-sources/epbt/epbt-structured.json", { cache: "force-cache" });
         if (!response.ok) throw new Error("Failed to load EPBT data");
         const json = (await response.json()) as EpbtStructuredData;
         epbtDataCache = json;
@@ -81,7 +81,7 @@ export function EpbtPage() {
                   <ArrowRight className="h-4 w-4" />
                 </Link>
                 <a
-                  href="/docs/epbt.doc"
+                  href="/assistant-sources/epbt/epbt.doc"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex h-10 items-center justify-center gap-1 rounded-lg border border-border/80 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground"
@@ -102,7 +102,7 @@ export function EpbtPage() {
 
             {!loading && chapters.length === 0 && (
               <div className="rounded-xl border border-destructive/35 bg-destructive/10 px-3 py-2.5 text-sm text-foreground">
-                Не удалось загрузить главы ЕПБТ. Проверьте файл `public/docs/epbt-structured.json`.
+                Не удалось загрузить главы ЕПБТ. Проверьте файл `public/assistant-sources/epbt/epbt-structured.json`.
               </div>
             )}
 

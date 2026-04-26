@@ -5,14 +5,19 @@
   "scripts": {
     "dev": "next dev",
     "dev:turbo": "next dev --turbo",
-    "assistant:dev": "node assistant/server.mjs",
-    "assistant:start": "node assistant/server.mjs",
+    "assistant:dev": "node scripts/emit-medicine-knowledge.mjs && node assistant/server.mjs",
+    "assistant:start": "node scripts/emit-medicine-knowledge.mjs && node assistant/server.mjs",
+    "emit:medicine": "node scripts/emit-medicine-knowledge.mjs",
+    "prebuild": "node scripts/emit-medicine-knowledge.mjs",
     "build": "next build",
     "export": "next build",
     "export:shared-hosting": "next build && node scripts/patch-export-for-shared-hosting.mjs",
+    "hosting:build": "npm run export:shared-hosting",
+    "hosting:check": "npm run lint && npm run build",
     "start": "next start",
     "lint": "next lint",
-    "generate:epbt": "node scripts/extract-epbt.js"
+    "generate:epbt": "node scripts/extract-epbt.js",
+    "parse:vss90": "node scripts/parse-vss90-tests.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.0",

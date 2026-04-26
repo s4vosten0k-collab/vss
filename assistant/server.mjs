@@ -35,9 +35,50 @@ function loadEnvFile(path) {
 loadEnvFile(resolve(process.cwd(), ".env"));
 loadEnvFile(resolve(process.cwd(), ".env.local"));
 
+const CWD = process.cwd();
+const EPBT_DEFAULT = "public/assistant-sources/epbt/epbt-structured.json";
+const EPBT_LEGACY = "public/docs/epbt-structured.json";
+const MED_DEFAULT = "public/assistant-sources/medicine/medicine-blocks.json";
+const MED_LEGACY = "public/docs/medicine-blocks.json";
+
+/**
+ * @param {string} envKey KNOWLEDGE_BASE_PATH / MEDICINE_KNOWLEDGE_PATH
+ * @param {string} defRel путь от корня репо по умолчанию
+ * @param {string} legacyRel путь public/docs/… для совместимости
+ */
+function resolveDataPath(envKey, defRel, legacyRel) {
+  const fromEnv = process.env[envKey] ? resolve(CWD, process.env[envKey]) : null;
+  if (fromEnv && existsSync(fromEnv)) {
+    return fromEnv;
+  }
+  if (fromEnv) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[assistant] ${envKey} не указывает на существующий файл: ${fromEnv} — ищу запасной путь (п. ${defRel} / ${legacyRel}).`,
+    );
+  }
+  const primary = resolve(CWD, defRel);
+  if (existsSync(primary)) {
+    return primary;
+  }
+  const legacy = resolve(CWD, legacyRel);
+  if (existsSync(legacy)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[assistant] подставлен устаревший путь: ${legacyRel} — перенесите в public/assistant-sources/ и задайте ${envKey} при деплое.`,
+    );
+    return legacy;
+  }
+  return primary;
+}
+
 const PORT = Number(process.env.PORT ?? process.env.ASSISTANT_PORT ?? 8787);
 const HOST = process.env.ASSISTANT_HOST ?? "127.0.0.1";
-const KNOWLEDGE_BASE_PATH = resolve(process.cwd(), process.env.KNOWLEDGE_BASE_PATH ?? "public/docs/epbt-structured.json");
+/** Увеличивайте при значимых правках `assistant/server.mjs`; сверяйте с полем в GET `/health` после деплоя. */
+const ASSISTANT_SERVER_REVISION = 16;
+const KNOWLEDGE_BASE_PATH = resolveDataPath("KNOWLEDGE_BASE_PATH", EPBT_DEFAULT, EPBT_LEGACY);
+const MEDICINE_KNOWLEDGE_PATH = resolveDataPath("MEDICINE_KNOWLEDGE_PATH", MED_DEFAULT, MED_LEGACY);
+const MEDICINE_DOCUMENT_LABEL = "Мед. справочник (болезни)";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "qwen/qwen3-next-80b-a3b-instruct:free";
 const OPENROUTER_MODEL_FALLBACKS = (process.env.OPENROUTER_MODEL_FALLBACKS ??
@@ -69,6 +110,8 @@ const OPENROUTER_MODEL_FALLBACKS = (process.env.OPENROUTER_MODEL_FALLBACKS ??
 
 /** @type {KnowledgeChunk[]} */
 let knowledgeBase = [];
+let epbtChunkCount = 0;
+let medicineChunkCount = 0;
 const RUSSIAN_STOP_WORDS = new Set([
   "и",
   "в",
@@ -131,8 +174,19 @@ function normalizeText(value) {
   return value.toLowerCase().replace(/[^a-zа-я0-9\s]/gi, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Типовые опечатки: «водалазн» и т.п. — иначе не срабатывает справочник болезней и RAG. */
+function applyDiverTypoTolerant(n) {
+  if (!n) {
+    return n;
+  }
+  return n
+    .replace(/водалаз/g, "водолаз")
+    .replace(/вадолаз/g, "водолаз")
+    .replace(/водолоз/g, "водолаз")
+}
+
 function tokenize(value) {
-  return normalizeText(value)
+  return applyDiverTypoTolerant(normalizeText(value))
     .split(" ")
     .filter((token) => token.length > 2 && !RUSSIAN_STOP_WORDS.has(token));
 }
@@ -184,6 +238,303 @@ function hasProcedureIntent(question) {
   );
 }
 
+function hasMedicineIntent(question) {
+  const n = applyDiverTypoTolerant(normalizeText(question));
+  return (
+    n.includes("болезн") ||
+    n.includes("заболев") ||
+    n.includes("симптом") ||
+    n.includes("диагноз") ||
+    n.includes("лечен") ||
+    n.includes("рекомпресс") ||
+    n.includes("декомпресс") ||
+    n.includes("баротрав") ||
+    n.includes("обжат") ||
+    n.includes("барогиперт") ||
+    n.includes("кислородн") ||
+    n.includes("голодан") ||
+    n.includes("отравлен") ||
+    n.includes("профилакт") ||
+    n.includes("медиц") ||
+    n.includes("спецфизиолог") ||
+    n.includes("переохлаж") ||
+    n.includes("перегрев") ||
+    n.includes("гипотерм") ||
+    n.includes("обморож") ||
+    n.includes("утопл") ||
+    n.includes("утопа") ||
+    n.includes("температур") ||
+    n.includes("озноб") ||
+    n.includes("согре") ||
+    n.includes("нагрев") ||
+    n.includes("теплозащ") ||
+    n.includes("гидрокомбинез") ||
+    (n.includes("водолазн") && (n.includes("бол") || n.includes("травм") || n.includes("здоров"))) ||
+    n.includes("барабан") ||
+    n.includes("перепон") ||
+    n.includes("легочн") ||
+    n.includes("сотряс") ||
+    n.includes("пневмо") ||
+    n.includes("пузырек") ||
+    n.includes("эмбол") ||
+    n.includes("вестиб") ||
+    n.includes("синус") ||
+    n.includes("синусит") ||
+    n.includes("залож") ||
+    n.includes("ушн") ||
+    n.includes("ухо") ||
+    n.includes("носов") ||
+    n.includes("носа") ||
+    n.includes("кровотеч") ||
+    n.includes("атропин") ||
+    n.includes("нитроглиц") ||
+    n.includes("валида") ||
+    n.includes("аптечк") ||
+    n.includes("санитар") ||
+    n.includes("госпитал") ||
+    n.includes("инфаркт") ||
+    n.includes("инсульт") ||
+    n.includes("сердц") ||
+    n.includes("кессон") ||
+    n.includes("всплыт") ||
+    n.includes("недостаточн") ||
+    (n.includes("помощ") && (n.includes("перв") || n.includes("само") || n.includes("друг"))) ||
+    (n.includes("оказ") && n.includes("помощ")) ||
+    (n.includes("вспл") && (n.includes("ух") || n.includes("нос") || n.includes("синус") || n.includes("легк")))
+  );
+}
+
+/**
+ * Обзор «водолазные болезни / что знаешь о болезнях»: токен «водолаз…» везде в ЕПБТ, RAG тянет только ЕПБТ — LLM
+ * пишет «в источниках нет болезней». В этом режиме в контекст идут **только** чанки мед. справочника.
+ */
+function isDivingDiseaseCorpusQuery(question) {
+  const n = applyDiverTypoTolerant(normalizeText(question));
+  const disease = n.includes("болезн") || n.includes("заболев") || n.includes("заболеван") || n.includes("патолог");
+  if (!disease) {
+    return false;
+  }
+  if (
+    n.includes("водолаз") ||
+    n.includes("водол") ||
+    n.includes("ныр") ||
+    n.includes("гипербар") ||
+    n.includes("кессон") ||
+    n.includes("декомп") ||
+    n.includes("дивинг") ||
+    n.includes("справоч")
+  ) {
+    return true;
+  }
+  if (n.includes("знаеш") && n.includes("болезн")) {
+    return true;
+  }
+  if (n.includes("знае") && n.includes("о ") && n.includes("болезн")) {
+    return true;
+  }
+  if (n.includes("расскаж") && n.includes("болезн")) {
+    return true;
+  }
+  if (n.includes("какие") && n.includes("болезн")) {
+    return true;
+  }
+  if (n.includes("перечисл") && n.includes("болезн")) {
+    return true;
+  }
+  if (n.includes("что") && n.includes("так") && n.includes("болезн")) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * «Что такое ЕПБТ?» — без преамбулы и «Общие положения / термины» модель берёт несвязные фрагменты
+ * (электрооборудование и т.д.) и пишет, что «определения нет».
+ */
+function isEpbtDefinitionCorpusQuery(question) {
+  const n = applyDiverTypoTolerant(normalizeText(question));
+  const mentions =
+    n.includes("епбт") ||
+    (n.includes("един") && n.includes("правил") && (n.includes("водолаз") || n.includes("труд")));
+  if (!mentions) {
+    return false;
+  }
+  return (
+    n.includes("что так") ||
+    n.includes("что за") ||
+    (n.includes("что") && n.includes("епбт")) ||
+    n.includes("означа") ||
+    n.includes("определ") ||
+    n.includes("расшифр") ||
+    n.includes("как расшифров") ||
+    (n.includes("полн") && n.includes("наимен"))
+  );
+}
+
+/**
+ * «Что такое переохлаждение?» / «что за баротравма» — hasMedicineIntent true, но в смеси с ЕПБТ модель
+ * цепляется за «в ЕПБТ нет…». Если явно просят определение/объяснение по **мед. теме** — контекст только из справочника болезней.
+ */
+function isMedicineDefinitionCorpusQuery(question) {
+  if (!hasMedicineIntent(question) || isEpbtDefinitionCorpusQuery(question)) {
+    return false;
+  }
+  const n = applyDiverTypoTolerant(normalizeText(question));
+  return (
+    n.includes("что так") ||
+    n.includes("что за") ||
+    n.includes("что это") ||
+    n.includes("как назыв") ||
+    (n.includes("что") && n.includes("означа")) ||
+    n.includes("дай опред") ||
+    n.includes("расскаж") ||
+    n.includes("поясн") ||
+    n.includes("объясн")
+  );
+}
+
+function isMedicineChunk(chunk) {
+  return String(chunk.document ?? "").includes("Мед.") || String(chunk.document ?? "").toLowerCase().includes("мед.");
+}
+
+function medicineBonus(chunk, question) {
+  if (!isMedicineChunk(chunk) || !hasMedicineIntent(question)) {
+    return 0;
+  }
+  return 6;
+}
+
+/** Тот же вес, что и в selectPrimarySources / retrieveChunks — для решения, показывать ли ссылки. */
+function sourceAttachmentScore(question, chunk) {
+  const questionTokens = tokenize(question);
+  return (
+    scoreChunk(questionTokens, chunk) +
+    (hasEmergencyHelpIntent(question) ? emergencyBonus(chunk) : 0) +
+    (hasProcedureIntent(question) ? procedureBonus(chunk) : 0) +
+    medicineBonus(chunk, question)
+  );
+}
+
+/**
+ * Когда прикреплять `sources` и строчку «Источник: …» в теле ответа.
+ * Если ретривер уже отобрал чанки (есть primary) — всегда отдаём источники и ссылки в UI.
+ */
+function shouldIncludeSourcesInResponse(question, primarySources) {
+  return primarySources.length > 0;
+}
+
+function sourceAttributionLine(chunk) {
+  const doc = (chunk.document || "источник").trim();
+  const sec = (chunk.section || "").replace(/\s+/g, " ").trim();
+  const pt = (chunk.point || "").replace(/\s+/g, " ").trim();
+  if (sec && pt) {
+    return `Источник: ${doc} — ${sec} — ${pt}.`;
+  }
+  if (sec) {
+    return `Источник: ${doc} — ${sec}.`;
+  }
+  if (pt) {
+    return `Источник: ${doc} — ${pt}.`;
+  }
+  return `Источник: ${doc}.`;
+}
+
+/**
+ * Цитаты для UI: по мед. вопросу — лучший фрагмент **по всей** базе справочника, иначе в топ-4 RAG
+ * часто только ЕПБТ, и ссылка «медицина» пропадала.
+ * @param {string} question
+ * @param {KnowledgeChunk[]} chunks
+ * @returns {{ citation: string | null; sourceUrl: string | null }}
+ */
+function buildCitationPayload(question, chunks) {
+  if (hasMedicineIntent(question)) {
+    const allMed = knowledgeBase.filter(isMedicineChunk);
+    if (allMed.length) {
+      const scored = allMed
+        .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
+        .sort((a, b) => b.score - a.score);
+      const top = scored[0].chunk;
+      return {
+        citation: sourceAttributionLine(top),
+        sourceUrl: top.url || "/assistant-docs/medicine/full/",
+      };
+    }
+  }
+  if (!chunks.length) {
+    // Пустой RAG (нестандартные формулировки): всё равно дать ссылку на ЕПБТ, если в подборку не попал ни один чанк
+    if (knowledgeBase.length) {
+      const topKb = pickAttributionChunk(question, knowledgeBase);
+      if (topKb) {
+        return {
+          citation: sourceAttributionLine(topKb),
+          sourceUrl: topKb.url || "/assistant-docs/epbt/full/",
+        };
+      }
+    }
+    return { citation: null, sourceUrl: null };
+  }
+  const attrChunk = pickAttributionChunk(question, chunks);
+  if (!attrChunk) {
+    return { citation: null, sourceUrl: null };
+  }
+  const sourceUrl =
+    attrChunk.url ||
+    (isMedicineChunk(attrChunk) ? "/assistant-docs/medicine/full/" : "/handbook/epbt/");
+  return {
+    citation: sourceAttributionLine(attrChunk),
+    sourceUrl,
+  };
+}
+
+/**
+ * Для отображения и подписи «Источник:»: при явном мед. вопросе — лучший релевантный чанк справочника,
+ * иначе лучший по score (как в ранжировании), чтобы не подставлять ЕПБТ, если ответ логично из «Медицины».
+ * @param {string} question
+ * @param {KnowledgeChunk[]} chunks
+ * @returns {KnowledgeChunk | null}
+ */
+function pickAttributionChunk(question, chunks) {
+  if (!chunks.length) {
+    return null;
+  }
+
+  const scored = chunks
+    .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const bestAny = scored.length ? scored[0].chunk : chunks[0];
+
+  if (hasMedicineIntent(question)) {
+    const medScored = scored.filter((item) => isMedicineChunk(item.chunk));
+    if (medScored.length) {
+      return medScored[0].chunk;
+    }
+    // В RAG-выборке только ЕПБТ, а мед. чанки с нулевым токен-скором отфильтрованы — берём лучший мед. из подборки
+    const medOnly = chunks.filter(isMedicineChunk);
+    if (medOnly.length) {
+      return medOnly
+        .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
+        .sort((a, b) => b.score - a.score)[0].chunk;
+    }
+  }
+
+  return bestAny;
+}
+
+/** Сохраняет порядок релевантности, но выводит мед. фрагменты первыми в блоке ссылок. */
+function orderRefsForDisplay(question, refs) {
+  if (!hasMedicineIntent(question) || refs.length < 2) {
+    return refs;
+  }
+  const med = refs.filter(isMedicineChunk);
+  const rest = refs.filter((c) => !isMedicineChunk(c));
+  if (!med.length) {
+    return refs;
+  }
+  return [...med, ...rest];
+}
+
 function emergencyBonus(chunk) {
   const normalized = normalizeText(`${chunk.section ?? ""} ${chunk.point ?? ""} ${chunk.text}`);
   let bonus = 0;
@@ -225,26 +576,107 @@ function procedureBonus(chunk) {
 }
 
 function retrieveChunks(question, limit = 6) {
+  const medOnly = knowledgeBase.filter(isMedicineChunk);
+  if (isDivingDiseaseCorpusQuery(question) && medOnly.length) {
+    const sorted = [...medOnly].sort((a, b) => String(a.id).localeCompare(String(b.id), "ru"));
+    return sorted.slice(0, limit);
+  }
+
+  if (isEpbtDefinitionCorpusQuery(question)) {
+    const epbt = knowledgeBase.filter((c) => !isMedicineChunk(c));
+    const preface = epbt.filter((c) => String(c.id).includes("preface"));
+    const g1 = epbt.filter((c) =>
+      applyDiverTypoTolerant(normalizeText(c.section || "")).includes("глава 1"),
+    );
+    const g2 = epbt.filter((c) =>
+      applyDiverTypoTolerant(normalizeText(c.section || "")).includes("глава 2"),
+    );
+    const merged = [...preface, ...g1, ...g2];
+    if (merged.length) {
+      const seen = new Set();
+      const out = [];
+      for (const c of merged) {
+        if (out.length >= limit) {
+          break;
+        }
+        if (!seen.has(c.id)) {
+          seen.add(c.id);
+          out.push(c);
+        }
+      }
+      return out;
+    }
+  }
+
+  if (isMedicineDefinitionCorpusQuery(question) && medOnly.length) {
+    const scored = medOnly
+      .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
+      .sort((a, b) => b.score - a.score);
+    return scored.map((item) => item.chunk).slice(0, limit);
+  }
+
+  const medIntent = hasMedicineIntent(question);
   const tokens = tokenize(question);
   if (!tokens.length) {
-    return [];
+    return medIntent ? medOnly.slice(0, limit) : [];
   }
 
   const emergencyIntent = hasEmergencyHelpIntent(question);
   const procedureIntent = hasProcedureIntent(question);
 
-  return knowledgeBase
-    .map((chunk) => {
-      const baseScore = scoreChunk(tokens, chunk);
-      let score = baseScore;
-      if (emergencyIntent) score += emergencyBonus(chunk);
-      if (procedureIntent) score += procedureBonus(chunk);
-      return { chunk, score };
-    })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((item) => item.chunk);
+  const scored = knowledgeBase.map((chunk) => {
+    const baseScore = scoreChunk(tokens, chunk);
+    let score = baseScore;
+    if (emergencyIntent) score += emergencyBonus(chunk);
+    if (procedureIntent) score += procedureBonus(chunk);
+    score += medicineBonus(chunk, question);
+    return { chunk, score };
+  });
+
+  const positive = scored.filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+  if (positive.length) {
+    let out = positive.slice(0, limit).map((item) => item.chunk);
+    // Вопросы по болезням: в контекст LLM обязаны попасть фрагменты справочника (а не только ЕПБТ с высоким весом).
+    if (medIntent) {
+      const medFromAll = scored
+        .filter((item) => isMedicineChunk(item.chunk))
+        .sort((a, b) => b.score - a.score);
+      const seen = new Set(out.map((c) => c.id));
+      const pref = [];
+      for (const item of medFromAll) {
+        if (pref.length >= Math.min(3, limit)) break;
+        if (!seen.has(item.chunk.id)) {
+          pref.push(item.chunk);
+          seen.add(item.chunk.id);
+        }
+      }
+      if (pref.length) {
+        const rest = out.filter((c) => !pref.some((p) => p.id === c.id));
+        out = [...pref, ...rest].slice(0, limit);
+      }
+      // Мед. намерение есть, но в топе только ЕПБТ (на проде med=0 или сбой подмеса) — иначе LLM пишет «в ЕПБТ нет…»
+      if (medOnly.length && out.length && out.every((c) => !isMedicineChunk(c))) {
+        const scoredM = medOnly
+          .map((chunk) => ({ chunk, score: sourceAttachmentScore(question, chunk) }))
+          .sort((a, b) => b.score - a.score);
+        out = scoredM.map((x) => x.chunk).slice(0, limit);
+      }
+    }
+    return out;
+  }
+
+  // Иначе LLM и без источников: скор 0 у всех (другие формулировки, опечатки). Для явно мед. тем — фрагменты справочника.
+  if (medIntent) {
+    const medScored = scored
+      .filter((item) => isMedicineChunk(item.chunk))
+      .sort((a, b) => b.score - a.score);
+    if (medScored.length) {
+      return medScored.slice(0, limit).map((item) => item.chunk);
+    }
+    return knowledgeBase.filter(isMedicineChunk).slice(0, limit);
+  }
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((item) => item.chunk);
 }
 
 function selectPrimarySources(question, chunks, maxSources = 2) {
@@ -262,7 +694,8 @@ function selectPrimarySources(question, chunks, maxSources = 2) {
       score:
         scoreChunk(questionTokens, chunk) +
         (emergencyIntent ? emergencyBonus(chunk) : 0) +
-        (procedureIntent ? procedureBonus(chunk) : 0),
+        (procedureIntent ? procedureBonus(chunk) : 0) +
+        medicineBonus(chunk, question),
     }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -309,6 +742,7 @@ function selectSourceReferences(question, chunks, maxRefs = 4) {
       let score = baseScore;
       if (emergencyIntent) score += emergencyBonus(chunk);
       if (procedureIntent) score += procedureBonus(chunk);
+      score += medicineBonus(chunk, question);
       return { chunk, score };
     })
     .filter((item) => item.score > 0)
@@ -336,72 +770,36 @@ function selectSourceReferences(question, chunks, maxRefs = 4) {
 }
 
 function buildSources(question, chunks) {
-  const refs = selectSourceReferences(question, chunks, hasEmergencyHelpIntent(question) ? 3 : 4);
+  const refs = orderRefsForDisplay(
+    question,
+    selectSourceReferences(question, chunks, hasEmergencyHelpIntent(question) ? 3 : 4),
+  );
   if (!refs.length) {
     return [];
   }
 
-  const primary = refs[0];
+  const primary = pickAttributionChunk(question, refs) ?? refs[0];
+  const fromMedicine = isMedicineChunk(primary);
+  const primaryUrl =
+    primary.url ||
+    (fromMedicine ? "/assistant-docs/medicine/full/" : "/handbook/epbt/");
   return [
     {
-      document: "ЕПБТ",
-      section: "Единые правила безопасности труда на водолазных работах",
+      document: fromMedicine ? "Справочник болезней" : "ЕПБТ",
+      section: fromMedicine
+        ? "Медицинский справочник (водолазная служба)"
+        : "Единые правила безопасности труда на водолазных работах",
       point: `${refs.length} релевантн. фрагм.`,
       quote: shortenText(primary.text, 220),
-      url: primary.url,
+      url: primaryUrl,
       refs: refs.map((chunk) => ({
         section: chunk.section,
         point: chunk.point,
         quote: shortenText(chunk.text, 260),
-        url: chunk.url,
+        url: chunk.url || (isMedicineChunk(chunk) ? "/assistant-docs/medicine/full/" : "/handbook/epbt/"),
       })),
     },
   ];
-}
-
-function hasStrongSourceMatch(question, chunks, minScore = 4) {
-  if (!chunks.length) {
-    return false;
-  }
-
-  const emergencyIntent = hasEmergencyHelpIntent(question);
-  const procedureIntent = hasProcedureIntent(question);
-  const questionTokens = tokenize(question);
-  const meaningfulTokens = questionTokens.filter((token) => token.length >= 4);
-  if (!meaningfulTokens.length) {
-    return false;
-  }
-
-  let bestScore = 0;
-  let bestMatchedTokenCount = 0;
-  for (const chunk of chunks) {
-    const chunkText = normalizeText(`${chunk.document} ${chunk.section ?? ""} ${chunk.point ?? ""} ${chunk.text}`);
-    let matchedTokenCount = 0;
-    for (const token of meaningfulTokens) {
-      if (chunkText.includes(token)) {
-        matchedTokenCount += 1;
-      }
-    }
-
-    let score = scoreChunk(questionTokens, chunk);
-    if (emergencyIntent) score += emergencyBonus(chunk);
-    if (procedureIntent) score += procedureBonus(chunk);
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatchedTokenCount = matchedTokenCount;
-      continue;
-    }
-    if (score === bestScore && matchedTokenCount > bestMatchedTokenCount) {
-      bestMatchedTokenCount = matchedTokenCount;
-    }
-  }
-
-  if (meaningfulTokens.length === 1) {
-    const singleToken = meaningfulTokens[0];
-    return singleToken.length >= 6 && bestMatchedTokenCount >= 1 && bestScore >= 5;
-  }
-
-  return bestMatchedTokenCount >= 2 && bestScore >= minScore;
 }
 
 function splitIntoParagraphs(text) {
@@ -442,6 +840,27 @@ function mapEpbtStructuredToKnowledge(payload) {
   /** @type {KnowledgeChunk[]} */
   const chunks = [];
 
+  const prefaceRaw = typeof payload.preface === "string" ? payload.preface.trim() : "";
+  if (prefaceRaw) {
+    const prefaceId = "preface";
+    const prefaceParts = splitChapterContent(prefaceRaw);
+    const parts = prefaceParts.length ? prefaceParts : [prefaceRaw];
+    for (const [i, part] of parts.entries()) {
+      if (!String(part).trim()) {
+        continue;
+      }
+      const chunkId = `epbt-${prefaceId}-${i + 1}`;
+      chunks.push({
+        id: chunkId,
+        document: "ЕПБТ",
+        section: "Преамбула (постановление, полное наименование ЕПБТ)",
+        point: `фрагмент ${i + 1}`,
+        text: part,
+        url: `/assistant-docs/epbt/full/?focus=${encodeURIComponent(chunkId)}#${encodeURIComponent(prefaceId)}`,
+      });
+    }
+  }
+
   const chapters = Array.isArray(payload.chapters) ? payload.chapters : [];
   for (const [chapterIndex, chapter] of chapters.entries()) {
     const title = typeof chapter.title === "string" ? chapter.title.trim() : `Глава ${chapterIndex + 1}`;
@@ -481,15 +900,91 @@ function mapEpbtStructuredToKnowledge(payload) {
   return chunks;
 }
 
+/**
+ * @param {{ diverMedicineBlocks?: unknown[] }} data
+ * @returns {{ chunks: KnowledgeChunk[]; stats: { blocks: number; textChunks: number } }}
+ */
+function mapMedicineToKnowledge(data) {
+  const list = Array.isArray(data?.diverMedicineBlocks) ? data.diverMedicineBlocks : [];
+  if (!list.length) {
+    return { chunks: [], stats: { blocks: 0, textChunks: 0 } };
+  }
+
+  /** @type {KnowledgeChunk[]} */
+  const chunks = [];
+  let textChunks = 0;
+
+  /** @param {string} chunkId @param {string} blockId */
+  const medicineSourceUrl = (chunkId, blockId) =>
+    `/assistant-docs/medicine/full/?focus=${encodeURIComponent(chunkId)}#${encodeURIComponent(blockId)}`;
+
+  for (const block of list) {
+    if (!block || typeof block !== "object") continue;
+    const id = typeof block.id === "string" ? block.id : "unknown";
+    const title = typeof block.title === "string" ? block.title.trim() : "Справочник болезней";
+
+    if (block.kind === "appendix") {
+      const content = typeof block.content === "string" ? block.content.trim() : "";
+      if (!content) continue;
+      const subparts = splitChapterContent(content);
+      for (const [paragraphIndex, paragraph] of subparts.entries()) {
+        if (!String(paragraph).trim()) continue;
+        textChunks += 1;
+        const chunkId = `med-app-${id}-${paragraphIndex + 1}`;
+        chunks.push({
+          id: chunkId,
+          document: MEDICINE_DOCUMENT_LABEL,
+          section: title,
+          point: `Приложение · фрагмент ${paragraphIndex + 1}`,
+          text: paragraph,
+          url: medicineSourceUrl(chunkId, id),
+        });
+      }
+      continue;
+    }
+
+    if (block.kind !== "article") continue;
+
+    for (const [field, label] of /** @type {const} */ ([
+      ["diagnostic", "Диагностика"],
+      ["treatment", "Лечение"],
+      ["prevention", "Профилактика"],
+    ])) {
+      const raw = block[field];
+      const text = typeof raw === "string" ? raw.trim() : "";
+      if (!text) continue;
+      const subparts = splitChapterContent(text);
+      for (const [paragraphIndex, paragraph] of subparts.entries()) {
+        if (!String(paragraph).trim()) continue;
+        textChunks += 1;
+        const chunkId = `med-${id}-${field}-${paragraphIndex + 1}`;
+        chunks.push({
+          id: chunkId,
+          document: MEDICINE_DOCUMENT_LABEL,
+          section: title,
+          point: `${label} · фрагмент ${paragraphIndex + 1}`,
+          text: paragraph,
+          url: medicineSourceUrl(chunkId, id),
+        });
+      }
+    }
+  }
+
+  return { chunks, stats: { blocks: list.length, textChunks } };
+}
+
 function fallbackAnswer(question, chunks) {
   const primarySources = selectPrimarySources(question, chunks, 2);
-  const shouldAttachSources = hasStrongSourceMatch(question, primarySources);
+  const shouldAttachSources = shouldIncludeSourcesInResponse(question, primarySources);
 
   if (!chunks.length) {
+    const citeEmpty = buildCitationPayload(question, chunks);
     return {
       answer:
-        "Кратко: в ЕПБТ не нашлось достаточно данных по этому вопросу.\n\nОснование:\n- Нет релевантных фрагментов в текущей выборке.\n\nПрактически:\n- Уточните запрос: добавьте термин, глубину, вид работ или номер пункта.",
+        "Кратко: в ЕПБТ и справочнике болезней не нашлось достаточно данных по этому вопросу.\n\nОснование:\n- Нет релевантных фрагментов в текущей выборке.\n\nПрактически:\n- Уточните запрос: болезнь или симптом, термин из ЕПБТ, глубину, вид работ или номер пункта.",
       sources: [],
+      citation: citeEmpty.citation,
+      sourceUrl: citeEmpty.sourceUrl,
     };
   }
 
@@ -497,9 +992,14 @@ function fallbackAnswer(question, chunks) {
     .map((chunk, index) => `${index + 1}. ${shortenText(chunk.text)}`)
     .join("\n");
 
+  const baseAnswer = `Кратко: по доступным источникам (ЕПБТ и справочник болезней) найдено релевантное основание.\n\nОснование:\n${brief}\n\nПрактически:\n- При необходимости уточните вопрос (симптом, глубина, вид работ, пункт ЕПБТ), чтобы получить более точный ответ.`;
+  const cite = buildCitationPayload(question, chunks);
+
   return {
-    answer: `Кратко: по ЕПБТ найдено релевантное основание.\n\nОснование:\n${brief}\n\nПрактически:\n- При необходимости уточните вопрос (глубина, вид работ, пункт), чтобы получить более точный ответ.`,
-    sources: shouldAttachSources ? buildSources(question, primarySources) : [],
+    answer: baseAnswer,
+    sources: shouldAttachSources ? buildSources(question, chunks) : [],
+    citation: cite.citation,
+    sourceUrl: cite.sourceUrl,
   };
 }
 
@@ -515,30 +1015,34 @@ async function askOpenRouter(question, chunks, model) {
     .join("\n\n");
 
   const systemPrompt =
-    "Ты ассистент по ЕПБТ (РБ). Отвечай строго на основе переданных источников. " +
-    "Не выдумывай нормы, пункты и факты. Если данных недостаточно, прямо скажи об этом. " +
+    "Ты ассистент по материалам водолазной службы: ЕПБТ (РБ) и справочник болезней для водолазов. " +
+    "Отвечай строго на основе переданных источников. " +
+    "Если в контексте есть фрагменты с «Мед. справочник» (болезни) — на вопросы о водолазных болезнях, перечислении, диагнозе, лечении и профилактике опирайся на них; не утверждай, что «в нормативах нет сведений о болезнях», если эти фрагменты переданы. " +
+    "Если вопрос про определение мед. термина (переохлаждение, баротравма, гипотермия и т.д.) — отвечай по фрагментам с Документ «Мед. справочник»; не пиши, что в ЕПБТ нет определения, пока в контексте есть мед. фрагменты по этой теме. " +
+    "Не выдумывай нормы, пункты, диагнозы и факты. Если данных недостаточно, прямо скажи об этом. " +
     "Пиши понятным, человеческим языком, как опытный инструктор. " +
     "Добавляй 1-2 уместных эмодзи внутри предложений по смыслу (например рядом с важным действием/предупреждением), но без перегруза. " +
     "Не предлагай опасные или самовольные действия, если они не подтверждены источником как штатная процедура. " +
+    "Для вопросов о болезнях и помощи: опирайся на справочник; для вопросов о порядке работ и нормах — на ЕПБТ. " +
     "Для аварийных вопросов приоритет: команда руководителя спуска, действия страхующего водолаза и безопасное оказание помощи.";
 
   const hasContext = chunks.length > 0;
   const sourceInstruction = hasContext
     ? `Используй только эти источники:
 ${context}`
-    : "Источники по запросу не найдены. Дай полезный краткий ответ без ссылок и без ссылок на пункты ЕПБТ.";
+    : "Источники по запросу не найдены. Дай полезный краткий ответ без ссылок и без ссылок на пункты документов.";
 
   const userPrompt = `Вопрос: ${question}
 
 ${sourceInstruction}
 
 Сформируй ответ как цельный, короткий и понятный текст без секций/заголовков.
-Ссылки и служебные пометки в тексте НЕ добавляй.
+В самом конце на отдельной строке кратко укажи опору по источникам: одна строка «Источник: <как в поле Документ> — <Раздел/статья> — <Пункт/фрагмент>» — по тому фрагменту, на котором основан ответ. Если вопрос о болезни, симптомах, лечении, диагнозе — укажи в строке «Источник» фрагмент из справочника болезней (не ЕПБТ), если в контексте есть такой фрагмент. URL и markdown-ссылки в тексте не пиши.
 Если вопрос про порядок проведения работ, отвечай строго по схеме: кто назначается -> подготовка до спуска -> проведение -> контроль/документы.
 Если вопрос про ответственных, обязательно назови конкретные роли, но только если они подтверждены источником.
 Не давай общих определений, если вопрос про порядок/ответственных.
 Не добавляй отдельную строку только из эмодзи и не ставь эмодзи отдельным хвостом в конце ответа.
-Ограничения: не более 650 символов, без markdown-таблиц, без длинных цитат, без повторов вопроса.`;
+Ограничения: не более 650 символов основного объяснения; строка «Источник:» может идти сразу после и не сильно удлиняет ответ. Без markdown-таблиц, без длинных цитат, без повторов вопроса.`;
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -573,11 +1077,14 @@ ${sourceInstruction}
   }
 
   const primarySources = selectPrimarySources(question, chunks, 2);
-  const shouldAttachSources = hasStrongSourceMatch(question, primarySources);
+  const shouldAttachSources = shouldIncludeSourcesInResponse(question, primarySources);
+  const cite = buildCitationPayload(question, chunks);
 
   return {
-    answer,
-    sources: shouldAttachSources ? buildSources(question, primarySources) : [],
+    answer: answer.trim(),
+    sources: shouldAttachSources ? buildSources(question, chunks) : [],
+    citation: cite.citation,
+    sourceUrl: cite.sourceUrl,
   };
 }
 
@@ -622,12 +1129,37 @@ async function readBody(req) {
   return JSON.parse(raw);
 }
 
-function writeJson(res, statusCode, payload) {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
+function corsHeaders() {
+  return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    "Access-Control-Expose-Headers": "X-Assistant-Revision, X-Assistant-Medicine-Chunks",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+/** Путь запроса без query; без завершающего слэша (кроме корня) — совместимость с /assistant/ на прокси. */
+function requestPathname(url) {
+  if (!url) return "/";
+  const pathOnly = url.split("?")[0] || "/";
+  if (pathOnly.length > 1 && pathOnly.endsWith("/")) {
+    return pathOnly.replace(/\/+$/g, "") || "/";
+  }
+  return pathOnly;
+}
+
+function writeJson(res, statusCode, payload) {
+  if (statusCode === 204) {
+    res.writeHead(204, corsHeaders());
+    res.end();
+    return;
+  }
+  res.writeHead(statusCode, {
+    ...corsHeaders(),
+    "Content-Type": "application/json; charset=utf-8",
+    "X-Assistant-Revision": String(ASSISTANT_SERVER_REVISION),
+    "X-Assistant-Medicine-Chunks": String(medicineChunkCount),
   });
   res.end(JSON.stringify(payload));
 }
@@ -635,17 +1167,61 @@ function writeJson(res, statusCode, payload) {
 async function bootstrapKnowledgeBase() {
   const raw = await readFile(KNOWLEDGE_BASE_PATH, "utf8");
   const parsed = JSON.parse(raw);
+
+  /** @type {KnowledgeChunk[]} */
+  let epbtChunks;
   if (Array.isArray(parsed)) {
-    knowledgeBase = parsed;
-    return;
+    epbtChunks = parsed;
+  } else if (parsed && typeof parsed === "object" && Array.isArray(parsed.chapters)) {
+    epbtChunks = mapEpbtStructuredToKnowledge(parsed);
+  } else {
+    throw new Error("Неподдерживаемый формат базы знаний. Используйте массив чанков или epbt-structured.json.");
   }
 
-  if (parsed && typeof parsed === "object" && Array.isArray(parsed.chapters)) {
-    knowledgeBase = mapEpbtStructuredToKnowledge(parsed);
-    return;
+  epbtChunkCount = epbtChunks.length;
+
+  /** @type {KnowledgeChunk[]} */
+  let medChunks = [];
+  if (existsSync(MEDICINE_KNOWLEDGE_PATH)) {
+    try {
+      const medRaw = await readFile(MEDICINE_KNOWLEDGE_PATH, "utf8");
+      const medParsed = JSON.parse(medRaw);
+      const { chunks, stats } = mapMedicineToKnowledge(medParsed);
+      medChunks = chunks;
+      medicineChunkCount = medChunks.length;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[assistant] мед. справочник: ${medicineChunkCount} чанков (текст. фрагм.: ${stats.textChunks} · записей: ${stats.blocks}) — ${MEDICINE_KNOWLEDGE_PATH}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // eslint-disable-next-line no-console
+      console.warn(`[assistant] не удалось загрузить ${MEDICINE_KNOWLEDGE_PATH}: ${message}`);
+      medicineChunkCount = 0;
+    }
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(`[assistant] файл мед. справочника не найден (${MEDICINE_KNOWLEDGE_PATH}) — сгенерировать: node scripts/emit-medicine-knowledge.mjs`);
+    medicineChunkCount = 0;
   }
 
-  throw new Error("Неподдерживаемый формат базы знаний. Используйте массив чанков или epbt-structured.json.");
+  knowledgeBase = [...epbtChunks, ...medChunks];
+  if (!knowledgeBase.length) {
+    // eslint-disable-next-line no-console
+    console.error(`[assistant] пустой knowledge base, проверьте: ${KNOWLEDGE_BASE_PATH}`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[assistant] база знаний: ${knowledgeBase.length} чанков (ЕПБТ: ${epbtChunkCount} · мед.: ${medicineChunkCount})`,
+    );
+  }
+  if (medicineChunkCount === 0) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[assistant] ВНИМАНИЕ: мед. справочник не загружен (0 чанков). Вопросы о болезнях будут отвечать только по ЕПБТ. " +
+        `Проверьте: ${MEDICINE_KNOWLEDGE_PATH} и перед стартом: node scripts/emit-medicine-knowledge.mjs`,
+    );
+  }
 }
 
 await bootstrapKnowledgeBase();
@@ -657,22 +1233,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    const path = requestPathname(req.url);
+
     if (req.method === "OPTIONS") {
       writeJson(res, 204, {});
       return;
     }
 
-    if (req.method === "GET" && req.url === "/health") {
+    if (req.method === "GET" && path === "/health") {
       writeJson(res, 200, {
         status: "ok",
+        assistantServerRevision: ASSISTANT_SERVER_REVISION,
         knowledgeChunks: knowledgeBase.length,
+        knowledgeChunksEpbt: epbtChunkCount,
+        knowledgeChunksMedicine: medicineChunkCount,
         llmConfigured: Boolean(OPENROUTER_API_KEY),
         model: OPENROUTER_MODEL,
       });
       return;
     }
 
-    if (req.method === "POST" && req.url === "/assistant") {
+    if (req.method === "POST" && path === "/assistant") {
       const body = await readBody(req);
       const question = typeof body?.question === "string" ? body.question.trim() : "";
       if (!question) {
@@ -680,7 +1261,12 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const matchedChunks = retrieveChunks(question, 4);
+      const chunkLimit = isDivingDiseaseCorpusQuery(question)
+        ? 8
+        : isEpbtDefinitionCorpusQuery(question) || isMedicineDefinitionCorpusQuery(question)
+          ? 6
+          : 4;
+      const matchedChunks = retrieveChunks(question, chunkLimit);
       if (!OPENROUTER_API_KEY) {
         writeJson(res, 200, fallbackAnswer(question, matchedChunks));
         return;
@@ -710,6 +1296,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Assistant API listening at http://${HOST}:${PORT}`);
   console.log(`Knowledge base: ${KNOWLEDGE_BASE_PATH}`);
+  console.log(`Medicine JSON: ${MEDICINE_KNOWLEDGE_PATH}`);
   console.log(`LLM: ${OPENROUTER_API_KEY ? "enabled" : "fallback mode"} (${OPENROUTER_MODEL})`);
   if (OPENROUTER_API_KEY && OPENROUTER_MODEL_FALLBACKS.length) {
     console.log(`LLM fallbacks: ${OPENROUTER_MODEL_FALLBACKS.join(", ")}`);

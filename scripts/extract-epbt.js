@@ -132,8 +132,8 @@ function buildSections(text) {
 }
 
 async function main() {
-  const sourcePath = path.resolve(process.cwd(), "public/docs/epbt.doc");
-  const outputPath = path.resolve(process.cwd(), "public/docs/epbt-structured.json");
+  const sourcePath = path.resolve(process.cwd(), "public/assistant-sources/epbt/epbt.doc");
+  const outputPath = path.resolve(process.cwd(), "public/assistant-sources/epbt/epbt-structured.json");
   const extractor = new WordExtractor();
   const doc = await extractor.extract(sourcePath);
   const rawText = doc.getBody();

@@ -84,7 +84,7 @@ function patchText(content) {
 
 async function main() {
   if (!(await exists(OUT_DIR))) {
-    throw new Error("Папка out не найдена. Сначала выполните npm run export.");
+    throw new Error("Папка out не найдена. Сначала выполните npm run build.");
   }
 
   const oldAssetsPath = path.join(OUT_DIR, OLD_ASSET_DIR);

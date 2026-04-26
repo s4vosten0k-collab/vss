@@ -60,7 +60,7 @@ export function AdaptiveModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[120] bg-black/65 p-2 backdrop-blur-sm sm:flex sm:items-center sm:p-4"
+          className="fixed inset-0 z-[120] bg-black/65 p-1.5 backdrop-blur-sm sm:flex sm:items-center sm:p-4"
           onClick={onClose}
         >
           <motion.div
@@ -74,7 +74,7 @@ export function AdaptiveModal({
             )}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex flex-col gap-2 border-b border-border/80 bg-secondary/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <div className="flex flex-col gap-1.5 border-b border-border/80 bg-secondary/20 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:px-4 sm:py-3">
               <div className="min-w-0 pr-1">{header}</div>
               {showCloseButton && (
                 <Button variant="ghost" size="sm" className="self-end sm:self-auto" onClick={onClose} aria-label="Закрыть">
@@ -82,7 +82,13 @@ export function AdaptiveModal({
                 </Button>
               )}
             </div>
-            <div className={cn("flex-1 space-y-3 overflow-y-auto px-2.5 py-2.5 sm:space-y-4 sm:p-3", contentClassName)}>
+            <div
+              className={cn(
+                "min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden overscroll-y-contain px-1.5 py-2 sm:space-y-4 sm:p-3",
+                "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
+                contentClassName,
+              )}
+            >
               {children}
             </div>
           </motion.div>

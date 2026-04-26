@@ -6,7 +6,16 @@ import { cn } from "@/lib/utils";
 
 const MENU_SCROLL_STORAGE_KEY = "bottom-nav-scroll-left";
 
-export type TabKey = "docs" | "duties" | "callsigns" | "signals" | "medicine" | "formulas" | "epbt" | "assistant";
+export type TabKey =
+  | "docs"
+  | "duties"
+  | "callsigns"
+  | "signals"
+  | "medicine"
+  | "tests"
+  | "formulas"
+  | "epbt"
+  | "assistant";
 
 export type TabConfig = {
   key: TabKey;

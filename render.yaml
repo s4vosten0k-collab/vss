@@ -1,16 +1,18 @@
 services:
   - type: web
-    name: vss-maximka-api
+    name: vss-vfl5
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && node scripts/emit-medicine-knowledge.mjs
     startCommand: npm run assistant:start
     healthCheckPath: /health
     envVars:
       - key: ASSISTANT_HOST
         value: 0.0.0.0
       - key: KNOWLEDGE_BASE_PATH
-        value: public/docs/epbt-structured.json
+        value: public/assistant-sources/epbt/epbt-structured.json
+      - key: MEDICINE_KNOWLEDGE_PATH
+        value: public/assistant-sources/medicine/medicine-blocks.json
       - key: OPENROUTER_MODEL
         value: qwen/qwen3-next-80b-a3b-instruct:free
       - key: OPENROUTER_MODEL_FALLBACKS

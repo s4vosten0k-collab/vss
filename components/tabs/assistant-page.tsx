@@ -29,16 +29,42 @@ type AssistantMessage = {
   role: "user" | "assistant";
   text: string;
   sources?: AssistantSource[];
+  /** Строка «Источник: …» с бэкенда — показывается отдельно от текста ответа */
+  citation?: string | null;
+  /** Прямая ссылка на фрагмент в полном документе */
+  sourceUrl?: string | null;
 };
 
 type AssistantApiResponse = {
   answer?: string;
   sources?: AssistantSource[];
+  citation?: string | null;
+  sourceUrl?: string | null;
   error?: string;
 };
 
 const API_ENDPOINT = process.env.NEXT_PUBLIC_ASSISTANT_API_URL?.trim() ?? "http://127.0.0.1:8787/assistant";
-const ASSISTANT_NAME = "Максимка";
+const ASSISTANT_NAME = "Павлик";
+
+/** Бэкенд иногда не дублирует citation в поля — подставляем из первой записи `sources` / `refs`, чтобы ссылка на мед. справочник не пропадала. */
+function resolveAssistantSource(m: AssistantMessage) {
+  const directUrl = m.sourceUrl?.trim() || null;
+  const directCitation = m.citation?.trim() || null;
+  if (directUrl || directCitation) {
+    return { sourceUrl: directUrl, citation: directCitation };
+  }
+  const s0 = m.sources?.[0];
+  if (!s0) {
+    return { sourceUrl: null, citation: null };
+  }
+  const refUrl = s0.refs?.find((r) => r.url?.trim())?.url?.trim();
+  const url = s0.url?.trim() || refUrl || null;
+  const line =
+    s0.document || s0.section
+      ? `Источник: ${[s0.document, s0.section, s0.point].filter(Boolean).join(" — ")}.`
+      : null;
+  return { sourceUrl: url, citation: line };
+}
 
 function withReturnToAssistant(url: string) {
   if (!url) return url;
@@ -313,24 +339,31 @@ export function AssistantPage() {
 
       const data = (await response.json()) as AssistantApiResponse;
       if (!response.ok || data.error) {
-        throw new Error(data.error || "Сервис помощника вернул ошибку.");
+        throw new Error(data.error || "Сервис Павлика вернул ошибку.");
       }
 
       const assistantMessage: AssistantMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        text: data.answer || "Нет ответа от сервиса помощника.",
+        text: data.answer || "Павлик не получил ответа от сервера.",
         sources: data.sources || [],
+        citation: data.citation ?? null,
+        sourceUrl: data.sourceUrl ?? null,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
-      const errorText =
-        error instanceof Error && error.name === "AbortError"
-          ? "Время ожидания ответа истекло (25 секунд). Проверьте доступность API."
+      const isAbort = error instanceof Error && error.name === "AbortError";
+      const isNetworkFail =
+        error instanceof Error &&
+        (error.message === "Failed to fetch" || error.name === "TypeError");
+      const errorText = isAbort
+        ? "Время ожидания ответа истекло (25 секунд). На бесплатном Render сервис мог «уснуть» — повторите запрос."
+        : isNetworkFail
+          ? "Не удаётся дойти до API (сеть, CORS или блокировка). Пересоберите сайт с верным `NEXT_PUBLIC_ASSISTANT_API_URL`, на Render — Redeploy бэкенда. Если в панели хоста включён **Content-Security-Policy** — в `connect-src` добавьте `https://vss-vfl5.onrender.com` (или `https://*.onrender.com`)."
           : error instanceof Error
             ? error.message
-            : "Не удалось получить ответ помощника.";
+            : "Не удалось получить ответ от Павлика.";
       setMessages((prev) => [
         ...prev,
         {
@@ -386,8 +419,8 @@ export function AssistantPage() {
             <div className="space-y-1">
               <p className="text-sm font-semibold text-foreground">{ASSISTANT_NAME}</p>
               <p className="text-xs leading-5 text-muted-foreground">
-                Пока я могу отвечать только на вопросы по ЕПБТ. Но мой создатель уже работает над тем, чтобы совсем скоро
-                я отвечал на все вопросы, которые касаются Службы.
+                Я <span className="text-foreground/90">помощник</span> по ЕПБТ, справочнику болезней и сопутствующим нормам. Постепенно смогу
+                закрывать больше вопросов, которые касаются Службы.
               </p>
             </div>
           </div>
@@ -397,6 +430,7 @@ export function AssistantPage() {
       <div className="space-y-3 rounded-2xl border border-border/70 bg-background/25 p-2.5 backdrop-blur-sm sm:p-3">
         {messages.map((message) => {
           const isAssistant = message.role === "assistant";
+          const resolved = isAssistant ? resolveAssistantSource(message) : { sourceUrl: null, citation: null };
           return (
             <motion.div
               key={message.id}
@@ -427,12 +461,30 @@ export function AssistantPage() {
                         <div className="mb-1.5 flex items-center gap-2">
                           <span className="text-[12px] font-semibold text-primary/95">{ASSISTANT_NAME}</span>
                           <span className="h-1 w-1 rounded-full bg-primary/60" />
-                          <span className="text-[11px] text-muted-foreground">помощник</span>
+                          <span className="text-[11px] text-muted-foreground">Помощник</span>
                         </div>
                       ) : null}
                       {renderTextWithLinks(message.text)}
                     </div>
                   </div>
+
+                  {isAssistant && (resolved.citation || resolved.sourceUrl) ? (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-2">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-emerald-600/95">Источник ответа</p>
+                      {resolved.citation ? (
+                        <p className="mt-1 text-[12px] leading-snug text-foreground/95">{resolved.citation}</p>
+                      ) : null}
+                      {resolved.sourceUrl ? (
+                        <a
+                          href={withReturnToAssistant(resolved.sourceUrl)}
+                          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-primary underline-offset-2 hover:underline"
+                        >
+                          Открыть фрагмент в документе
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {isAssistant && message.sources?.length ? (
                     <motion.div
@@ -443,19 +495,19 @@ export function AssistantPage() {
                     >
                       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-primary/90">Источники</p>
                       <div className="grid gap-1.5">
-                        {message.sources
-                          .filter((source) => Boolean(source.url))
-                          .slice(0, 4)
-                          .map((source, index) => (
-                            <button
-                              key={`${source.document}-${index}`}
-                              type="button"
-                              onClick={() => setSelectedSource(source)}
-                              className="rounded-md border border-primary/35 bg-background/70 px-2 py-1 text-[11px] leading-4 text-primary/95 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-primary/20"
-                            >
-                              <span className="font-semibold">{source.document}</span>
-                            </button>
-                          ))}
+                        {message.sources.slice(0, 4).map((source, index) => (
+                          <button
+                            key={`${source.document}-${index}`}
+                            type="button"
+                            onClick={() => setSelectedSource(source)}
+                            className="rounded-md border border-primary/35 bg-background/70 px-2 py-1 text-left text-[11px] leading-4 text-primary/95 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-primary/20"
+                          >
+                            <span className="font-semibold">{source.document}</span>
+                            {source.section ? (
+                              <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">{source.section}</span>
+                            ) : null}
+                          </button>
+                        ))}
                       </div>
                     </motion.div>
                   ) : null}
@@ -495,7 +547,7 @@ export function AssistantPage() {
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleQuestionKeyDown}
               rows={4}
-              placeholder="Например: Какие условия допуска к водолазным спускам и кто проводит медобеспечение?"
+              placeholder="Например: симптомы декомпрессионной болезни, или: кто оформляет наряд-допуск по ЕПБТ?"
               className="w-full resize-y rounded-2xl border border-border/70 bg-background/75 px-3.5 py-2.5 text-sm leading-6 text-foreground outline-none transition duration-200 focus:border-primary/50 focus:ring-2 focus:ring-primary/25"
             />
             <Button
@@ -511,7 +563,7 @@ export function AssistantPage() {
               ) : (
                 <>
                   <SendHorizontal className="h-4 w-4" />
-                  Спросить помощника
+                  Спросить Павлика
                 </>
               )}
             </Button>
@@ -524,7 +576,7 @@ export function AssistantPage() {
         onClose={() => setSelectedSource(null)}
         header={
           <div>
-            <p className="text-sm font-semibold text-foreground">Источник ЕПБТ</p>
+            <p className="text-sm font-semibold text-foreground">Источник</p>
             <p className="text-xs text-muted-foreground">
               {selectedSource?.section ?? selectedSource?.document ?? "Фрагмент документа"}
               {selectedSource?.point ? ` • ${selectedSource.point}` : ""}
@@ -544,7 +596,7 @@ export function AssistantPage() {
 
         {selectedSource?.refs?.length ? (
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary/90">Пункты и главы</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary/90">Фрагменты</p>
             <div className="space-y-2">
               {selectedSource.refs.map((ref, index) => (
                 <div key={`ref-${index}`} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
@@ -558,7 +610,7 @@ export function AssistantPage() {
                       href={withReturnToAssistant(ref.url)}
                       className="mt-1 inline-flex items-center text-[11px] text-primary underline-offset-2 hover:underline"
                     >
-                      Перейти к пункту
+                      Открыть в справочнике
                     </a>
                   ) : null}
                 </div>
@@ -572,7 +624,7 @@ export function AssistantPage() {
             href={withReturnToAssistant(selectedSource.url)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-primary/45 bg-primary/15 px-3 py-2 text-xs font-semibold text-primary transition-colors hover:border-primary/70 hover:bg-primary/20"
           >
-            Открыть полный документ
+            {selectedSource?.document === "Справочник болезней" ? "Открыть фрагмент в полном справочнике" : "Открыть полный документ"}
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
         ) : null}

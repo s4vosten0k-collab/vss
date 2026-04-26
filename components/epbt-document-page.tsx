@@ -69,7 +69,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
       }
 
       try {
-        const response = await fetch("/docs/epbt-structured.json", { cache: "force-cache" });
+        const response = await fetch("/assistant-sources/epbt/epbt-structured.json", { cache: "force-cache" });
         if (!response.ok) throw new Error("Failed to load EPBT data");
         const json = (await response.json()) as EpbtStructuredData;
         epbtDataCache = json;
@@ -143,7 +143,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
         <main className="space-y-4 px-4 pb-4 pt-3">
           <div className="rounded-xl border border-border/70 bg-secondary/15 p-3">
             <a
-              href="/docs/epbt.doc"
+              href="/assistant-sources/epbt/epbt.doc"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground"
@@ -154,7 +154,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
           </div>
 
           <div ref={contentRef} className="space-y-3 sm:space-y-4">
-            <section className="rounded-xl border border-primary/25 bg-primary/5 p-3">
+            <section data-chapter-id="preface" className="rounded-xl border border-primary/25 bg-primary/5 p-3">
               <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary">
                 <FileText className="h-4 w-4" />
                 Преамбула
@@ -165,10 +165,31 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-[80%]" />
                 </div>
-              ) : (
-                <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs leading-5 text-muted-foreground sm:text-sm sm:leading-6">
-                  {data?.preface}
-                </p>
+              ) : !data?.preface ? null : (
+                <div className="mt-2 space-y-2.5">
+                  {(() => {
+                    const frags = splitChapterContent(data.preface);
+                    const parts = frags.length > 0 ? frags : [data.preface];
+                    return parts.map((fragment, idx) => {
+                      const fragmentId = `epbt-preface-${idx + 1}`;
+                      const isFocused = focusedFragmentId === fragmentId;
+                      return (
+                        <p
+                          key={fragmentId}
+                          data-fragment-id={fragmentId}
+                          className={[
+                            "whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs leading-5 text-muted-foreground sm:text-sm sm:leading-6",
+                            isFocused
+                              ? "scroll-mt-20 rounded-md border border-primary/50 bg-primary/15 text-foreground transition-colors duration-300"
+                              : "",
+                          ].join(" ")}
+                        >
+                          {fragment}
+                        </p>
+                      );
+                    });
+                  })()}
+                </div>
               )}
             </section>
 

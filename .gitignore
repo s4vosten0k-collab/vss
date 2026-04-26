@@ -13,6 +13,7 @@
 .DS_Store
 *.pem
 /deploy-out.zip
+/scripts/_vss90_extract.txt
 
 # debug
 npm-debug.log*
