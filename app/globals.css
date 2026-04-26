@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 47% 8%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 96%;
+  --primary: 22 93% 54%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 223 30% 20%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 223 26% 17%;
+  --muted-foreground: 215 20% 70%;
+  --border: 222 21% 25%;
+  --input: 222 21% 24%;
+  --ring: 22 93% 54%;
+}
+
+* {
+  @apply border-border;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  background-image: radial-gradient(circle at top, rgba(249, 115, 22, 0.15), transparent 38%);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  text-rendering: optimizeLegibility;
+  scrollbar-gutter: stable;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+html.modal-open {
+  overflow: hidden;
+}
+
+body.modal-open .mobile-bottom-nav {
+  display: none !important;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(18px);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade-up {
+    animation: fade-up 0.35s ease-out both;
+  }
+
+  .menu-card-enter {
+    animation: menu-card-enter 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .menu-active-glow {
+    animation: menu-active-glow 1.9s ease-in-out infinite;
+  }
+
+  .menu-swipe-hint {
+    animation: menu-swipe-hint 1.6s ease-in-out infinite;
+  }
+
+  .menu-shimmer {
+    animation: menu-shimmer 1.9s linear infinite;
+  }
+
+  .mobile-menu-dock-enter {
+    animation: mobile-menu-dock-enter 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .mobile-menu-chip-float {
+    animation: mobile-menu-chip-float 2.8s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .menu-active-glow,
+  .menu-shimmer,
+  .menu-swipe-hint,
+  .menu-card-enter {
+    animation: none !important;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes menu-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes menu-active-glow {
+  0%,
+  100% {
+    box-shadow: 0 10px 22px -16px rgba(249, 115, 22, 0.85);
+  }
+  50% {
+    box-shadow: 0 14px 28px -14px rgba(249, 115, 22, 0.98);
+  }
+}
+
+@keyframes menu-swipe-hint {
+  0%,
+  100% {
+    opacity: 0.92;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(2px);
+  }
+}
+
+@keyframes menu-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(180%);
+  }
+}
+
+@keyframes mobile-menu-dock-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes mobile-menu-chip-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}

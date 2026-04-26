@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: vss-maximka-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run assistant:start
+    healthCheckPath: /health
+    envVars:
+      - key: ASSISTANT_HOST
+        value: 0.0.0.0
+      - key: KNOWLEDGE_BASE_PATH
+        value: public/docs/epbt-structured.json
+      - key: OPENROUTER_MODEL
+        value: qwen/qwen3-next-80b-a3b-instruct:free
+      - key: OPENROUTER_MODEL_FALLBACKS
+        value: openai/gpt-oss-120b:free,openai/gpt-oss-20b:free,google/gemma-3-12b-it:free,qwen/qwen3-coder:free,meta-llama/llama-3.3-70b-instruct:free
+      - key: OPENROUTER_API_KEY
+        sync: false
