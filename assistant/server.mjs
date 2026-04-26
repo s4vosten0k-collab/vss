@@ -75,7 +75,7 @@ function resolveDataPath(envKey, defRel, legacyRel) {
 const PORT = Number(process.env.PORT ?? process.env.ASSISTANT_PORT ?? 8787);
 const HOST = process.env.ASSISTANT_HOST ?? "127.0.0.1";
 /** Увеличивайте при значимых правках `assistant/server.mjs`; сверяйте с полем в GET `/health` после деплоя. */
-const ASSISTANT_SERVER_REVISION = 17;
+const ASSISTANT_SERVER_REVISION = 19;
 const KNOWLEDGE_BASE_PATH = resolveDataPath("KNOWLEDGE_BASE_PATH", EPBT_DEFAULT, EPBT_LEGACY);
 const MEDICINE_KNOWLEDGE_PATH = resolveDataPath("MEDICINE_KNOWLEDGE_PATH", MED_DEFAULT, MED_LEGACY);
 const MEDICINE_DOCUMENT_LABEL = "Мед. справочник (болезни)";
@@ -281,6 +281,178 @@ function hasEmergencyHelpIntent(question) {
     normalized.includes("не отвечает") ||
     normalized.includes("спасти")
   );
+}
+
+const TRIVIAL_SUBSTANTIVE_MARKERS = new RegExp(
+  [
+    "водолаз",
+    "епбт",
+    "декомп",
+    "спуск",
+    "камер",
+    "кислород",
+    "докумен",
+    "пункт",
+    "болез",
+    "баротр",
+    "травм",
+    "кессон",
+    "рекомп",
+    "глуб",
+    "метр",
+    "охран(а|о)\\s*труда",
+    "безопас(н|)ост(ь|)и?\\s*труда",
+    "безопас(н|)ост(ь|)и?\\b",
+    "наряд",
+    "инструк",
+    "симпт",
+    "лечен(и|о)",
+    "санит",
+    "обжат",
+    "пневм",
+    "синус",
+    "токсич",
+    "гипо",
+    "темпер",
+    "темпера",
+    "сжат",
+    "смес(ь|и)",
+    "треб(ов|о)",
+    "\\d",
+  ].join("|"),
+  "i",
+);
+
+const TRIVIAL_CHITCHAT_WORDS = new Set([
+  "привет",
+  "приветик",
+  "здрасте",
+  "здрасьте",
+  "здравствуй",
+  "здравствуйте",
+  "салют",
+  "хай",
+  "оу",
+  "как",
+  "дела",
+  "дело",
+  "там",
+  "тут",
+  "жизнь",
+  "сам",
+  "сама",
+  "само",
+  "ты",
+  "тебя",
+  "тобой",
+  "вас",
+  "вам",
+  "добрый",
+  "доброе",
+  "доброго",
+  "утро",
+  "утра",
+  "день",
+  "дня",
+  "вечер",
+  "вечера",
+  "суток",
+  "ночь",
+  "ночи",
+  "сутки",
+  "спасибо",
+  "пасиб",
+  "пасиба",
+  "благодарю",
+  "спс",
+  "пока",
+  "покеда",
+  "прощай",
+  "прощайте",
+  "свидан",
+  "удачи",
+  "счастливо",
+  "счас",
+  "ок",
+  "окей",
+  "норм",
+  "нормально",
+  "хорошо",
+  "отлично",
+  "ага",
+  "угу",
+  "да",
+  "ну",
+  "нет",
+  "ладно",
+  "пж",
+  "пожалуйста",
+  "понятно",
+  "ясно",
+  "супер",
+  "слыш",
+  "слышно",
+  "алло",
+  "эй",
+  "ааа",
+  "аа",
+  "все",
+  "всё",
+  "прив",
+  "рад",
+  "рада",
+  "merci",
+  "thx",
+  "thanks",
+  "hi",
+  "hello",
+  "всем",
+  "sos",
+  "помоги",
+  "помогите",
+  "помочь",
+]);
+
+/**
+ * Сообщения без вопроса к базе (привет, ok) — не показывать ссылки и цитаты ЕПБТ.
+ * @param {string} question
+ */
+function isTrivialConversationalQuery(question) {
+  const n0 = applyDiverTypoTolerant(normalizeText(question))
+    .replace(/[\p{Extended_Pictographic}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (n0.length > 100) {
+    return false;
+  }
+  if (!n0) {
+    return true;
+  }
+  if (TRIVIAL_SUBSTANTIVE_MARKERS.test(n0)) {
+    return false;
+  }
+  const t = n0
+    .replace(/[!?…,.:;""«»""—–-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (t.length > 80) {
+    return false;
+  }
+  const words = t.split(" ").filter(Boolean);
+  if (words.length > 5) {
+    return false;
+  }
+  for (const w of words) {
+    const L = w.toLowerCase();
+    if (L.length <= 1) {
+      continue;
+    }
+    if (TRIVIAL_CHITCHAT_WORDS.has(L)) {
+      continue;
+    }
+    return false;
+  }
+  return words.length > 0;
 }
 
 function hasProcedureIntent(question) {
@@ -528,6 +700,9 @@ function sourceAttachmentScore(question, chunk) {
  * Строка «Источник: …» в **теле** ответа не требуется — источники в UI.
  */
 function shouldIncludeSourcesInResponse(question, primarySources) {
+  if (isTrivialConversationalQuery(question)) {
+    return false;
+  }
   return primarySources.length > 0;
 }
 
@@ -578,6 +753,9 @@ function stripAnswerInlineSourceAttribution(text) {
  * @returns {{ citation: string | null; sourceUrl: string | null }}
  */
 function buildCitationPayload(question, chunks) {
+  if (isTrivialConversationalQuery(question)) {
+    return { citation: null, sourceUrl: null };
+  }
   if (hasMedicineIntent(question)) {
     const allMed = knowledgeBase.filter(isMedicineChunk);
     if (allMed.length) {
@@ -1090,6 +1268,15 @@ function mapMedicineToKnowledge(data) {
 }
 
 function fallbackAnswer(question, chunks) {
+  if (isTrivialConversationalQuery(question)) {
+    return {
+      answer:
+        "Здравствуйте! Задайте вопрос по ЕПБТ, справочнику болезней или по организации спуска — отвечу с опорой на документы. 🙂",
+      sources: [],
+      citation: null,
+      sourceUrl: null,
+    };
+  }
   const primarySources = selectPrimarySources(question, chunks, 2);
   const shouldAttachSources = shouldIncludeSourcesInResponse(question, primarySources);
 
@@ -1382,7 +1569,9 @@ const server = createServer(async (req, res) => {
         : isEpbtDefinitionCorpusQuery(question) || isMedicineDefinitionCorpusQuery(question)
           ? 6
           : 4;
-      const matchedChunks = retrieveChunks(question, chunkLimit);
+      const matchedChunks = isTrivialConversationalQuery(question)
+        ? []
+        : retrieveChunks(question, chunkLimit);
       if (!OPENROUTER_API_KEY) {
         writeJson(res, 200, fallbackAnswer(question, matchedChunks));
         return;
