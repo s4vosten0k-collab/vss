@@ -75,7 +75,7 @@ function resolveDataPath(envKey, defRel, legacyRel) {
 const PORT = Number(process.env.PORT ?? process.env.ASSISTANT_PORT ?? 8787);
 const HOST = process.env.ASSISTANT_HOST ?? "127.0.0.1";
 /** Увеличивайте при значимых правках `assistant/server.mjs`; сверяйте с полем в GET `/health` после деплоя. */
-const ASSISTANT_SERVER_REVISION = 19;
+const ASSISTANT_SERVER_REVISION = 23;
 const KNOWLEDGE_BASE_PATH = resolveDataPath("KNOWLEDGE_BASE_PATH", EPBT_DEFAULT, EPBT_LEGACY);
 const MEDICINE_KNOWLEDGE_PATH = resolveDataPath("MEDICINE_KNOWLEDGE_PATH", MED_DEFAULT, MED_LEGACY);
 const MEDICINE_DOCUMENT_LABEL = "Мед. справочник (болезни)";
@@ -1418,6 +1418,209 @@ async function askOpenRouterWithFallback(question, chunks) {
   throw new Error(`Не удалось получить ответ от OpenRouter. Попытки: ${details}`);
 }
 
+/**
+ * @param {unknown} body
+ * @returns {{ error?: string, question?: string, options?: string[], correctIndices?: number[], selectedIndices?: number[], note?: string }}
+ */
+function validateTestExplainBody(body) {
+  const question = typeof body?.question === "string" ? body.question.trim() : "";
+  const options = Array.isArray(body?.options) ? body.options.map((o) => String(o)) : [];
+  const correctIndices = Array.isArray(body?.correctIndices) ? body.correctIndices.map((n) => Number(n)) : [];
+  const selectedIndices = Array.isArray(body?.selectedIndices) ? body.selectedIndices.map((n) => Number(n)) : [];
+  const noteRaw = typeof body?.note === "string" ? body.note.trim() : "";
+  if (!question || options.length < 2) {
+    return { error: "Нужны question и options (минимум 2 варианта)." };
+  }
+  const max = options.length - 1;
+  for (const i of correctIndices) {
+    if (!Number.isInteger(i) || i < 0 || i > max) {
+      return { error: "correctIndices: индексы вне диапазона вариантов." };
+    }
+  }
+  for (const i of selectedIndices) {
+    if (!Number.isInteger(i) || i < 0 || i > max) {
+      return { error: "selectedIndices: индексы вне диапазона вариантов." };
+    }
+  }
+  if (!correctIndices.length) {
+    return { error: "correctIndices не может быть пустым." };
+  }
+  if (!selectedIndices.length) {
+    return { error: "selectedIndices не может быть пустым." };
+  }
+  return {
+    question,
+    options,
+    correctIndices,
+    selectedIndices,
+    note: noteRaw || undefined,
+  };
+}
+
+/**
+ * @param {{ question: string, options: string[], correctIndices: number[], selectedIndices: number[], note?: string }} p
+ */
+function fallbackTestExplain(p) {
+  const fmt = (idx) => `${idx + 1}. ${p.options[idx]}`;
+  const correctPart = p.correctIndices.map(fmt).join("; ");
+  const selPart = p.selectedIndices.map(fmt).join("; ");
+  const base = `Верный ответ: ${correctPart}. Вы выбрали: ${selPart}.`;
+  if (p.note) {
+    return `${base}\n\nПояснение из базы теста:\n${p.note}`;
+  }
+  return (
+    `${base}\n\nСопоставьте свою логику с нормами (ЕПБТ, требования к работам и т.д.) — при необходимости перечитайте тему в справочнике.`
+  );
+}
+
+/**
+ * Запрос для RAG: формулировка вопроса + верные варианты (лучше «цепляют» ЕПБТ и справочник).
+ * @param {{ question: string, options: string[], correctIndices: number[] }} payload
+ */
+function buildTestExplainRetrievalQuery(payload) {
+  const correctBits = payload.correctIndices
+    .map((i) => payload.options[i])
+    .filter(Boolean)
+    .join(" ");
+  return `${payload.question}\n${correctBits}`.trim();
+}
+
+/**
+ * @param {KnowledgeChunk[]} chunks
+ */
+function formatKnowledgeChunksForTestExplain(chunks) {
+  if (!chunks || !chunks.length) {
+    return "";
+  }
+  return chunks
+    .map((chunk, index) => {
+      return `Фрагмент ${index + 1}
+Документ: ${chunk.document}
+Раздел: ${chunk.section ?? "-"}
+Пункт: ${chunk.point ?? "-"}
+Текст: ${chunk.text}`;
+    })
+    .join("\n\n");
+}
+
+/**
+ * @param {{ question: string, options: string[], correctIndices: number[], selectedIndices: number[], note?: string }} payload
+ * @param {KnowledgeChunk[]} knowledgeChunks
+ */
+function buildTestExplainUserPrompt(payload, knowledgeChunks) {
+  const { question, options, correctIndices, selectedIndices, note } = payload;
+  const optionBlock = options.map((o, i) => `${i + 1}. ${o}`).join("\n");
+  const correctNums = correctIndices.map((i) => i + 1).join(", ");
+  const selectedNums = selectedIndices.map((i) => i + 1).join(", ");
+  const ctx = formatKnowledgeChunksForTestExplain(knowledgeChunks || []);
+  const hasCtx = Boolean(ctx && ctx.trim().length);
+  const contextSection = hasCtx
+    ? `\n---\nФрагменты из рабочей базы (ЕПБТ, мед. справочник — неполная выборка для поиска; в них может не попасть дословная нумерация «п. 159» и т.п.).\n` +
+      `Если в справке к тесту (выше) уже дан смысл нормы — она важнее отсутствия номера пункта в этих фрагментах.\n` +
+      `Не утверждай, что в ЕПБТ «нет пункта» только потому, что в выборке фрагментов нет дословного «п. N».\n\n${ctx}\n---\n`
+    : `\n(Поиск по базе дал мало фрагментов — опирайся на справку к тесту и верные варианты.)\n`;
+
+  const testNotePriority =
+    "ИНСТРУКЦИЯ: блок «Справка из учебного пояснения» (если он есть ниже) согласован с учебным материалом и отражает суть п. ЕПБТ из вопроса. " +
+    "Категорически нельзя отвечать отказом («невозможно ответить», «в предоставленных фрагментах нет п. 159…»), если справка уже перечисляет суть нормы (например три способа поиска). " +
+    "Автоподбор фрагментов — сокращение; неполное попадание нумерации в выборку не отменяет норму в полном ЕПБТ и не отменяет справку к тесту.\n\n";
+
+  return `${testNotePriority}Объясни ошибку в тесте (ВСС, водолазная служба).
+
+Вопрос:
+${question}
+
+Все варианты:
+${optionBlock}
+
+Верны варианты (номера): ${correctNums}
+Пользователь выбрал (номера): ${selectedNums}
+${note ? `\nСправка из учебного пояснения к тесту (приоритет для содержания нормы):\n${note}\n` : ""}
+${contextSection}
+Сформируй 4–8 предложений простым языком:
+— почему ответ пользователя неверен;
+— в чём смысл правильного варианта: сначала из справки к тесту (если есть), дополнительно — из фрагментов базы, если помогают;
+— не пиши, что дать ответ «невозможно» при непустой справке к тесту;
+— без дословного повторения всего вопроса, без markdown-заголовков и URL.`;
+}
+
+const TEST_EXPLAIN_SYSTEM =
+  "Ты опытный инструктор водолазно-спасательной службы. Объясняй ошибки в тестах ясно, по-русски, без нравоучений. " +
+  "Контекст «Справка из учебного пояснения к тесту» — доверенный; если там перечислены факты (способы поиска, цифры, запреты), используй их, не говори, что в ЕПБТ «ничего нет» или «невозможно ответить». " +
+  "Релевантные фрагменты RAG — не полный ЕПБТ: отсутствие в них строки «п. 159» не означает отсутствия нормы в документе. " +
+  "Не отказывайся от объяснения при заполненной справке к тесту. Номера пунктов цитируй только из текста фрагментов или из справки, не придумывай.";
+
+/**
+ * @param {string} userPrompt
+ * @param {string} model
+ */
+async function askOpenRouterTestExplain(userPrompt, model) {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://mchs-rb-assistant.local",
+      "X-Title": "MCHS-RB-TestExplain",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: TEST_EXPLAIN_SYSTEM },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 700,
+    }),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    const error = new Error(`OpenRouter error ${response.status}: ${errorText}`);
+    // @ts-ignore
+    error.statusCode = response.status;
+    throw error;
+  }
+  const data = await response.json();
+  const answer = data?.choices?.[0]?.message?.content?.trim();
+  if (!answer) {
+    throw new Error("OpenRouter вернул пустой ответ.");
+  }
+  return answer;
+}
+
+/**
+ * @param {string} userPrompt
+ */
+async function askOpenRouterTestExplainWithFallback(userPrompt) {
+  const modelsToTry = [OPENROUTER_MODEL, ...OPENROUTER_MODEL_FALLBACKS].filter(
+    (model, index, all) => all.indexOf(model) === index,
+  );
+  for (const model of modelsToTry) {
+    try {
+      return await askOpenRouterTestExplain(userPrompt, model);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      const statusCode = error && typeof error === "object" ? Number(error.statusCode) : NaN;
+      if (!Number.isFinite(statusCode) || (statusCode !== 404 && statusCode !== 429)) {
+        break;
+      }
+    }
+  }
+  throw new Error("Не удалось сгенерировать пояснение (LLM).");
+}
+
+/**
+ * @param {{ question: string, options: string[], correctIndices: number[], selectedIndices: number[], note?: string }} payload
+ */
+async function runTestExplainLlm(payload) {
+  const q = buildTestExplainRetrievalQuery(payload);
+  const chunkLimit = 8;
+  /** Для теста не обнуляем выдачу через isTrivialConversationalQuery — иначе теряются релевантные фрагменты ЕПБТ. */
+  const matchedChunks = retrieveChunks(q, chunkLimit);
+  const userPrompt = buildTestExplainUserPrompt(payload, matchedChunks);
+  return askOpenRouterTestExplainWithFallback(userPrompt);
+}
+
 async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -1558,6 +1761,41 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && path === "/assistant") {
       const body = await readBody(req);
+
+      if (body?.mode === "test_explain") {
+        const v = validateTestExplainBody(body);
+        if (v.error) {
+          writeJson(res, 400, { error: v.error });
+          return;
+        }
+        const payload = {
+          question: v.question,
+          options: v.options,
+          correctIndices: v.correctIndices,
+          selectedIndices: v.selectedIndices,
+          note: v.note,
+        };
+        if (!OPENROUTER_API_KEY) {
+          writeJson(res, 200, {
+            answer: fallbackTestExplain(payload),
+            fallback: true,
+          });
+          return;
+        }
+        try {
+          const answer = await runTestExplainLlm(payload);
+          writeJson(res, 200, { answer, fallback: false });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Ошибка генерации.";
+          writeJson(res, 200, {
+            answer: fallbackTestExplain(payload),
+            fallback: true,
+            warning: reason,
+          });
+        }
+        return;
+      }
+
       const question = typeof body?.question === "string" ? body.question.trim() : "";
       if (!question) {
         writeJson(res, 400, { error: "Поле question обязательно." });
@@ -1585,6 +1823,44 @@ const server = createServer(async (req, res) => {
         const fallback = fallbackAnswer(question, matchedChunks);
         writeJson(res, 200, {
           ...fallback,
+          warning: reason,
+        });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && path === "/test-explain") {
+      const body = await readBody(req);
+      const v = validateTestExplainBody(body);
+      if (v.error) {
+        writeJson(res, 400, { error: v.error });
+        return;
+      }
+
+      const payload = {
+        question: v.question,
+        options: v.options,
+        correctIndices: v.correctIndices,
+        selectedIndices: v.selectedIndices,
+        note: v.note,
+      };
+
+      if (!OPENROUTER_API_KEY) {
+        writeJson(res, 200, {
+          answer: fallbackTestExplain(payload),
+          fallback: true,
+        });
+        return;
+      }
+
+      try {
+        const answer = await runTestExplainLlm(payload);
+        writeJson(res, 200, { answer, fallback: false });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "Ошибка генерации.";
+        writeJson(res, 200, {
+          answer: fallbackTestExplain(payload),
+          fallback: true,
           warning: reason,
         });
       }

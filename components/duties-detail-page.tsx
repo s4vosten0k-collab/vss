@@ -16,7 +16,7 @@ export function DutiesDetailPage({ roleId }: DutiesDetailPageProps) {
     return (
       <>
         <Header title="Обязанности" />
-        <div className="mx-auto min-h-dvh max-w-lg bg-background/95 pb-24">
+        <div className="app-shell min-h-dvh bg-background/95 pb-24">
           <main className="space-y-4 px-4 pb-4 pt-3">
             <section className="rounded-xl border border-destructive/35 bg-destructive/10 p-3 text-sm text-foreground">
               Раздел не найден.
@@ -30,7 +30,7 @@ export function DutiesDetailPage({ roleId }: DutiesDetailPageProps) {
   return (
     <>
       <Header title={detail.title} />
-      <div className="mx-auto min-h-dvh max-w-lg bg-background/95 pb-24">
+      <div className="app-shell min-h-dvh bg-background/95 pb-24">
         <main className="space-y-4 px-4 pb-4 pt-3">
           {detail.sections.map((section) => (
             <section
@@ -73,7 +73,7 @@ export function DutiesDetailPage({ roleId }: DutiesDetailPageProps) {
       </div>
 
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40">
-        <div className="mx-auto flex w-full max-w-lg items-center justify-end px-4 pb-[calc(env(safe-area-inset-bottom)+0.8rem)]">
+        <div className="app-shell flex items-center justify-end px-4 md:px-6 pb-[calc(env(safe-area-inset-bottom)+0.8rem)]">
           <Link
             href="/handbook/?tab=duties"
             className="pointer-events-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-[0_12px_30px_-18px_rgba(0,0,0,0.9)] supports-[backdrop-filter]:bg-background/90 supports-[backdrop-filter]:backdrop-blur-md"

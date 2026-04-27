@@ -15,6 +15,8 @@ type AdaptiveModalProps = {
   maxWidthClass?: string;
   contentClassName?: string;
   showCloseButton?: boolean;
+  /** Поверх других окон (например поверх модалки теста). */
+  overlayZClass?: string;
 };
 
 export function AdaptiveModal({
@@ -25,6 +27,7 @@ export function AdaptiveModal({
   maxWidthClass = "max-w-5xl",
   contentClassName,
   showCloseButton = true,
+  overlayZClass = "z-[120]",
 }: AdaptiveModalProps) {
   const [mounted, setMounted] = useState(false);
 
@@ -60,7 +63,7 @@ export function AdaptiveModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[120] bg-black/65 p-1.5 backdrop-blur-sm sm:flex sm:items-center sm:p-4"
+          className={cn("fixed inset-0 bg-black/65 p-1.5 backdrop-blur-sm sm:flex sm:items-center sm:p-4", overlayZClass)}
           onClick={onClose}
         >
           <motion.div

@@ -98,15 +98,27 @@ npm run hosting:build
 - **`NEXT_PUBLIC_ASSISTANT_API_URL`** — публичный URL API (тот же endpoint `/assistant`). Задайте в `.env.production.local` (шаблон: `.env.production.example`) или в CI **до** `npm run build`, иначе во фронт попадёт `localhost` и Павлик на сайте не подключится.
 - **`NEXT_PUBLIC_BASE_PATH`** — только если сайт в подкаталоге, например `https://домен/vss/`: значение `vss` без слэшей.
 
-### Архив для загрузки (Windows, PowerShell)
+### Архив для загрузки
 
-После `npm run hosting:build` в каталоге проекта:
+Одной командой (сборка, патч Apache, zip в корне проекта):
+
+```bash
+npm run hosting:package
+```
+
+Или только zip, если папка `out` уже собрана:
+
+```bash
+npm run hosting:zip
+```
+
+**Windows (PowerShell), вручную** после `npm run hosting:build`:
 
 ```powershell
 Compress-Archive -Path (Join-Path (Get-Location) "out\*") -DestinationPath (Join-Path (Get-Location) "deploy-out.zip") -Force
 ```
 
-Получится `deploy-out.zip` (в `.gitignore`), распакуйте в web-каталог на хостинге.
+Получится `deploy-out.zip` (в `.gitignore`), распакуйте **содержимое** в web-каталог на хостинге.
 
 ## SprintHost: как залить сайт
 

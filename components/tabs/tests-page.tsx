@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AdaptiveModal } from "@/components/ui/adaptive-modal";
 import { RuleCitationText } from "@/components/rule-citation-text";
+import { TestWrongAnswerExplainModal } from "@/components/test-wrong-answer-explain-modal";
+import { fetchTestWrongExplain } from "@/lib/assistant-test-explain";
+import { APP_SHELL_MAX } from "@/lib/app-layout";
 import { cn } from "@/lib/utils";
 import vssTests from "@/lib/vss-tests-90.json";
 
@@ -70,6 +73,7 @@ export function TestsPage() {
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [allOpen, setAllOpen] = useState(false);
   const [quizItems, setQuizItems] = useState<VssItem[]>([]);
+  const [quizRunId, setQuizRunId] = useState(0);
   const [step, setStep] = useState(0);
   const [phase, setPhase] = useState<"answering" | "feedback">("answering");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -77,14 +81,25 @@ export function TestsPage() {
   const [correctCount, setCorrectCount] = useState(0);
   const [finished, setFinished] = useState(false);
 
+  const [aiExplainOpen, setAiExplainOpen] = useState(false);
+  const [aiExplainLoading, setAiExplainLoading] = useState(false);
+  const [aiExplainText, setAiExplainText] = useState("");
+  const [aiExplainError, setAiExplainError] = useState<string | null>(null);
+  const [aiExplainFallback, setAiExplainFallback] = useState(false);
+  const [aiExplainWarning, setAiExplainWarning] = useState<string | null>(null);
+  const explainAbortRef = useRef<AbortController | null>(null);
+  const explainDedupeKeyRef = useRef<string | null>(null);
+
   const startNewQuiz = useCallback(() => {
     setQuizItems(shufflePickN(ALL_ITEMS, QUIZ_SIZE));
+    setQuizRunId((r) => r + 1);
     setStep(0);
     setPhase("answering");
     setSelectedIndex(null);
     setSelectedIndices([]);
     setCorrectCount(0);
     setFinished(false);
+    explainDedupeKeyRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -92,6 +107,81 @@ export function TestsPage() {
       startNewQuiz();
     }
   }, [verifyOpen, startNewQuiz]);
+
+  useEffect(() => {
+    if (!verifyOpen) {
+      explainAbortRef.current?.abort();
+      setAiExplainOpen(false);
+      setAiExplainLoading(false);
+      setAiExplainText("");
+      setAiExplainError(null);
+      setAiExplainFallback(false);
+      setAiExplainWarning(null);
+      explainDedupeKeyRef.current = null;
+    }
+  }, [verifyOpen]);
+
+  const handleWrongAnswer = useCallback(
+    (ctx: { item: VssItem; selectedIndex: number | null; selectedIndices: number[]; multi: boolean }) => {
+      const { item, selectedIndex, selectedIndices, multi } = ctx;
+      const dedupKey = `${quizRunId}-${step}-${item.id}`;
+      if (explainDedupeKeyRef.current === dedupKey) {
+        return;
+      }
+      explainDedupeKeyRef.current = dedupKey;
+
+      explainAbortRef.current?.abort();
+      const ac = new AbortController();
+      explainAbortRef.current = ac;
+
+      setAiExplainOpen(true);
+      setAiExplainLoading(true);
+      setAiExplainText("");
+      setAiExplainError(null);
+      setAiExplainFallback(false);
+      setAiExplainWarning(null);
+
+      const correctIndices = isVssMultiSelect(item) ? item.correctIndices : [item.correctIndex];
+      const selectedForPayload = multi
+        ? [...selectedIndices].sort((a, b) => a - b)
+        : selectedIndex !== null
+          ? [selectedIndex]
+          : [];
+
+      if (selectedForPayload.length === 0) {
+        setAiExplainLoading(false);
+        setAiExplainError("Не удалось определить ваш выбор.");
+        return;
+      }
+
+      const payload = {
+        question: item.question,
+        options: item.options.map((o) => formatOptionDisplay(o)),
+        correctIndices: [...correctIndices].sort((a, b) => a - b),
+        selectedIndices: selectedForPayload,
+        note: item.note?.trim() || undefined,
+      };
+
+      void fetchTestWrongExplain(payload, ac.signal)
+        .then((r) => {
+          if (ac.signal.aborted) return;
+          setAiExplainText(r.answer);
+          setAiExplainFallback(!!r.fallback);
+          setAiExplainWarning(r.warning?.trim() || null);
+        })
+        .catch((e: unknown) => {
+          if (e instanceof Error && e.name === "AbortError") return;
+          const msg = e instanceof Error ? e.message : "Не удалось получить пояснение.";
+          setAiExplainError(msg);
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) {
+            setAiExplainLoading(false);
+          }
+        });
+    },
+    [quizRunId, step],
+  );
 
   const current = quizItems[step];
   const isMulti = Boolean(current && isVssMultiSelect(current));
@@ -162,7 +252,7 @@ export function TestsPage() {
       <AdaptiveModal
         open={verifyOpen}
         onClose={() => setVerifyOpen(false)}
-        maxWidthClass="max-w-lg"
+        maxWidthClass={APP_SHELL_MAX}
         contentClassName="px-3 sm:px-3"
         header={
           <div className="w-full">
@@ -199,6 +289,7 @@ export function TestsPage() {
               onToggleMulti={handleToggleMulti}
               onSubmitMulti={handleSubmitMulti}
               onNext={goNext}
+              onWrongAnswer={handleWrongAnswer}
             />
           ) : null}
         </div>
@@ -207,7 +298,7 @@ export function TestsPage() {
       <AdaptiveModal
         open={allOpen}
         onClose={() => setAllOpen(false)}
-        maxWidthClass="max-w-2xl"
+        maxWidthClass={APP_SHELL_MAX}
         header={
           <div>
             <p className="text-sm font-semibold text-foreground">Все ответы</p>
@@ -232,6 +323,19 @@ export function TestsPage() {
           ))}
         </div>
       </AdaptiveModal>
+
+      <TestWrongAnswerExplainModal
+        open={aiExplainOpen}
+        onClose={() => {
+          explainAbortRef.current?.abort();
+          setAiExplainOpen(false);
+        }}
+        loading={aiExplainLoading}
+        text={aiExplainText}
+        error={aiExplainError}
+        fallback={aiExplainFallback}
+        warning={aiExplainWarning}
+      />
     </section>
   );
 }
@@ -292,6 +396,7 @@ function PddStyleQuestion({
   onToggleMulti,
   onSubmitMulti,
   onNext,
+  onWrongAnswer,
 }: {
   item: VssItem;
   stepIndex: number;
@@ -305,10 +410,25 @@ function PddStyleQuestion({
   onToggleMulti: (idx: number) => void;
   onSubmitMulti: () => void;
   onNext: () => void;
+  onWrongAnswer?: (ctx: {
+    item: VssItem;
+    selectedIndex: number | null;
+    selectedIndices: number[];
+    multi: boolean;
+  }) => void;
 }) {
   const showFeedback = phase === "feedback" && (multi || selectedIndex !== null);
   const correctSet = getCorrectIndexSet(item);
   const progress = Math.max(0, Math.min(100, ((stepIndex + 1) / totalSteps) * 100));
+  const onWrongRef = useRef(onWrongAnswer);
+  onWrongRef.current = onWrongAnswer;
+
+  useEffect(() => {
+    if (!showFeedback || isCorrect) {
+      return;
+    }
+    onWrongRef.current?.({ item, selectedIndex, selectedIndices, multi });
+  }, [showFeedback, isCorrect, item, selectedIndex, selectedIndices, multi]);
 
   return (
     <div className="space-y-3 sm:space-y-4">

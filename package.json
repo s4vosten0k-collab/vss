@@ -13,6 +13,8 @@
     "export": "next build",
     "export:shared-hosting": "next build && node scripts/patch-export-for-shared-hosting.mjs",
     "hosting:build": "npm run export:shared-hosting",
+    "hosting:zip": "node scripts/zip-out.mjs",
+    "hosting:package": "npm run hosting:build && node scripts/zip-out.mjs",
     "hosting:check": "npm run lint && npm run build",
     "start": "next start",
     "lint": "next lint",

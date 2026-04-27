@@ -139,7 +139,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
   return (
     <>
       <Header title={title} />
-      <div className="mx-auto min-h-dvh max-w-lg bg-background/95 pb-24">
+      <div className="app-shell min-h-dvh bg-background/95 pb-24">
         <main className="space-y-4 px-4 pb-4 pt-3">
           <div className="rounded-xl border border-border/70 bg-secondary/15 p-3">
             <a
@@ -222,7 +222,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
       </div>
 
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40">
-        <div className="mx-auto flex w-full max-w-lg items-center justify-end gap-2 px-4 pb-[calc(env(safe-area-inset-bottom)+0.8rem)]">
+        <div className="app-shell flex items-center justify-end gap-2 px-4 md:px-6 pb-[calc(env(safe-area-inset-bottom)+0.8rem)]">
           <Link
             href={returnToHref}
             className="pointer-events-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-[0_12px_30px_-18px_rgba(0,0,0,0.9)] supports-[backdrop-filter]:bg-background/90 supports-[backdrop-filter]:backdrop-blur-md"
@@ -244,7 +244,7 @@ export function EpbtDocumentPage({ title = "ЕПБТ", defaultReturnTo = "/handb
       {isChaptersOpen && (
         <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Список глав ЕПБТ">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsChaptersOpen(false)} />
-          <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-lg rounded-t-2xl border border-border/80 bg-background p-3 shadow-2xl">
+          <div className="absolute bottom-0 left-1/2 w-full -translate-x-1/2 app-shell rounded-t-2xl border border-border/80 bg-background p-3 shadow-2xl">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-sm font-semibold text-foreground">Быстрый переход по главам</p>
               <Button type="button" variant="ghost" size="sm" onClick={() => setIsChaptersOpen(false)} aria-label="Закрыть">

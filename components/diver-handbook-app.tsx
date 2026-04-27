@@ -3,12 +3,11 @@
 import { useEffect, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, ClipboardCheck, ClipboardList, LifeBuoy, Radio, ScrollText, ShieldAlert, Stethoscope } from "lucide-react";
+import { Activity, ClipboardCheck, ClipboardList, Radio, ScrollText, ShieldAlert, Stethoscope } from "lucide-react";
 import { BottomNav, type TabConfig, type TabKey } from "@/components/bottom-nav";
 import { Header } from "@/components/header";
 import { PageContainer } from "@/components/page-container";
 import { CallsignsPage } from "@/components/tabs/callsigns-page";
-import { AssistantPage } from "@/components/tabs/assistant-page";
 import { DocumentsPage } from "@/components/tabs/documents-page";
 import { DutiesPage } from "@/components/tabs/duties-page";
 import { SignalsPage } from "@/components/tabs/signals-page";
@@ -22,7 +21,6 @@ const tabs: TabConfig[] = [
   { key: "signals", label: "Сигналы", icon: Activity },
   { key: "medicine", label: "Медицина", icon: Stethoscope },
   { key: "tests", label: "Тесты", icon: ClipboardCheck },
-  { key: "assistant", label: "Павлик", icon: LifeBuoy },
   { key: "epbt", label: "Епбт", icon: ShieldAlert },
 ];
 
@@ -34,7 +32,6 @@ const tabTitles: Record<TabKey, string> = {
   medicine: "Медицина",
   tests: "Тесты",
   formulas: "Формулы",
-  assistant: "Павлик",
   epbt: "Епбт",
 };
 
@@ -70,8 +67,6 @@ export function DiverHandbookApp() {
         return <MedicinePage />;
       case "tests":
         return <TestsPage />;
-      case "assistant":
-        return <AssistantPage />;
       case "epbt":
         return null;
     }

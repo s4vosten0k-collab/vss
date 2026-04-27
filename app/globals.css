@@ -24,6 +24,13 @@
   @apply border-border;
 }
 
+/* Общая колонка: телефон — max-w-lg; на ПК — шире (до ~1152px). Согласовывать с `lib/app-layout.ts` → `APP_SHELL_MAX`. */
+@layer components {
+  .app-shell {
+    @apply mx-auto w-full max-w-lg md:max-w-3xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl;
+  }
+}
+
 html,
 body {
   min-height: 100%;

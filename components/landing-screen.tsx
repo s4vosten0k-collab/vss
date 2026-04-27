@@ -9,7 +9,7 @@ export function LandingScreen() {
   const reduceMotion = useReducedMotion();
 
   return (
-    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg items-center justify-center overflow-hidden px-4 py-8">
+    <main className="app-shell relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-8 md:px-6">
       <div className="absolute inset-0 -z-20 bg-[radial-gradient(circle_at_15%_20%,rgba(30,58,138,0.35),transparent_45%),radial-gradient(circle_at_85%_0%,rgba(249,115,22,0.18),transparent_35%),linear-gradient(180deg,#0b1220_0%,#0e1728_50%,#0b1220_100%)]" />
       <div className="absolute -left-20 top-20 -z-10 h-64 w-64 rounded-full border border-white/10" />
       <div className="absolute -right-24 bottom-24 -z-10 h-72 w-72 rounded-full border border-primary/20" />

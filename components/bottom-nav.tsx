@@ -1,10 +1,9 @@
 "use client";
 
-import { type WheelEvent, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react";
+import { useState } from "react";
+import { LayoutGrid, type LucideIcon } from "lucide-react";
+import { SectionsBottomSheet } from "@/components/sections-bottom-sheet";
 import { cn } from "@/lib/utils";
-
-const MENU_SCROLL_STORAGE_KEY = "bottom-nav-scroll-left";
 
 export type TabKey =
   | "docs"
@@ -14,8 +13,7 @@ export type TabKey =
   | "medicine"
   | "tests"
   | "formulas"
-  | "epbt"
-  | "assistant";
+  | "epbt";
 
 export type TabConfig = {
   key: TabKey;
@@ -30,140 +28,65 @@ type BottomNavProps = {
 };
 
 export function BottomNav({ tabs, activeTab, onChange }: BottomNavProps) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [showSwipeHint, setShowSwipeHint] = useState(true);
-  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
-
-  useEffect(() => {
-    const media = window.matchMedia("(hover: none) and (pointer: coarse)");
-    const update = () => setIsCoarsePointer(media.matches);
-    update();
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", update);
-      return () => media.removeEventListener("change", update);
-    }
-
-    media.addListener(update);
-    return () => media.removeListener(update);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const container = scrollRef.current;
-    if (!container) {
-      return;
-    }
-
-    const rawValue = window.sessionStorage.getItem(MENU_SCROLL_STORAGE_KEY);
-    if (!rawValue) {
-      return;
-    }
-
-    const restored = Number(rawValue);
-    if (!Number.isFinite(restored)) {
-      return;
-    }
-
-    container.scrollLeft = restored;
-    if (restored > 20) {
-      setShowSwipeHint(false);
-    }
-  }, []);
-
-  const handleScroll = () => {
-    const container = scrollRef.current;
-    if (!container) {
-      return;
-    }
-
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem(MENU_SCROLL_STORAGE_KEY, String(container.scrollLeft));
-    }
-
-    if (container.scrollLeft > 20) {
-      setShowSwipeHint(false);
-    }
-  };
-
-  const handleWheelScroll = (event: WheelEvent<HTMLDivElement>) => {
-    if (isCoarsePointer || !scrollRef.current) {
-      return;
-    }
-
-    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-      const container = scrollRef.current;
-      const canScrollHorizontally = container.scrollWidth > container.clientWidth + 2;
-      if (!canScrollHorizontally) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      container.scrollLeft += event.deltaY;
-    }
-  };
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
-    <nav
-      className={cn(
-        "mobile-bottom-nav fixed inset-x-0 bottom-0 z-30 bg-transparent pb-[calc(env(safe-area-inset-bottom)+0.35rem)] pt-2 transition-all duration-200",
-        isCoarsePointer && "mobile-menu-dock-enter",
-      )}
-    >
-      <div className="mx-auto w-full max-w-lg px-2">
-        <div className="rounded-2xl border border-border/80 bg-background/95 px-1.5 pb-1.5 pt-1 shadow-[0_12px_40px_-22px_rgba(0,0,0,0.9)] supports-[backdrop-filter]:bg-background/90 supports-[backdrop-filter]:backdrop-blur-md">
-          <div className="mb-1.5 flex items-center justify-between px-1">
-            <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Разделы</p>
-            <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground/90">
-              <ChevronLeft className="h-3 w-3" />
-              <span
-                className={cn(
-                  "transition-opacity duration-300",
-                  showSwipeHint ? "opacity-100 text-primary/95" : "opacity-55",
-                )}
-              >
-                Свайп влево/вправо
-              </span>
-              <ChevronRight className="h-3 w-3" />
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-gradient-to-r from-background/95 to-transparent" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-5 bg-gradient-to-l from-background/95 to-transparent" />
-            <div
-              ref={scrollRef}
-              onWheel={handleWheelScroll}
-              onScroll={handleScroll}
-              className="flex gap-1 overflow-x-auto overscroll-x-contain px-0.5 pb-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:[scrollbar-width:thin] md:[&::-webkit-scrollbar]:block md:[&::-webkit-scrollbar]:h-1"
+    <>
+      <nav
+        className="mobile-bottom-nav pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-transparent pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)] pt-2"
+        aria-label="Навигация по разделам"
+      >
+        <div className="pointer-events-auto app-shell px-4 md:px-6">
+          <button
+            type="button"
+            onClick={() => setSheetOpen(true)}
+            className={cn(
+              "group flex h-11 min-h-[44px] w-full items-center justify-center gap-2.5 rounded-2xl border px-3",
+              "text-sm font-semibold tracking-tight antialiased",
+              "border-border/90 bg-gradient-to-b from-secondary to-card text-foreground/95",
+              "ring-1 ring-inset ring-white/10",
+              "shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_2px_8px_rgba(0,0,0,0.35),0_12px_32px_rgba(0,0,0,0.45),0_0_0_1px_rgba(0,0,0,0.35)]",
+              "transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out",
+              "hover:border-primary/25 hover:from-secondary hover:to-secondary",
+              "hover:shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_3px_10px_rgba(0,0,0,0.4),0_14px_36px_rgba(0,0,0,0.5)]",
+              "active:scale-[0.98] motion-reduce:active:scale-100",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+              sheetOpen && [
+                "border-primary/45 from-primary/20 to-primary/5 text-foreground",
+                "ring-1 ring-inset ring-primary/25",
+                "shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_2px_8px_rgba(249,115,22,0.2),0_8px_28px_rgba(0,0,0,0.5)]",
+              ],
+            )}
+            aria-expanded={sheetOpen}
+            aria-label="Открыть список разделов"
+            aria-haspopup="dialog"
+          >
+            <span
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                "border-border/60 bg-background/50 text-foreground/85",
+                "group-hover:border-border group-hover:bg-background/70 group-hover:text-foreground",
+                sheetOpen && "border-primary/40 bg-primary/20 text-primary",
+              )}
             >
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = tab.key === activeTab;
-
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => onChange(tab.key)}
-                    className={cn(
-                      "shrink-0 rounded-xl border px-3 py-2 transition-all duration-200",
-                      "flex min-w-[108px] items-center gap-2",
-                      isActive ? "border-primary/45 bg-primary/20 text-primary" : "border-border/70 bg-secondary/15 text-muted-foreground",
-                    )}
-                    aria-label={tab.label}
-                    aria-current={isActive ? "page" : undefined}
-                  >
-                    <Icon className={cn("h-4 w-4 shrink-0")} />
-                    <span className="block truncate text-xs font-medium leading-tight">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+              <LayoutGrid className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </span>
+            <span
+              className={cn("pr-0.5", sheetOpen ? "text-foreground" : "text-foreground/90 group-hover:text-foreground")}
+            >
+              Разделы
+            </span>
+          </button>
         </div>
-      </div>
-    </nav>
+      </nav>
+
+      <SectionsBottomSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        tabs={tabs}
+        activeTab={activeTab}
+        onSelect={onChange}
+      />
+    </>
   );
 }

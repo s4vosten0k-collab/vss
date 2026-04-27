@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import { Inter } from "next/font/google";
+import { AssistantChatFab } from "@/components/assistant-chat-fab";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,7 +43,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <meta httpEquiv="Content-Security-Policy" content={CSP} />
       </head>
-      <body className={`${inter.variable} font-sans`}>{children}</body>
+      <body className={`${inter.variable} font-sans`}>
+        {children}
+        <Suspense fallback={null}>
+          <AssistantChatFab />
+        </Suspense>
+      </body>
     </html>
   );
 }
