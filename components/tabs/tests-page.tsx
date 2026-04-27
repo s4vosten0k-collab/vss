@@ -329,6 +329,7 @@ export function TestsPage() {
         onClose={() => {
           explainAbortRef.current?.abort();
           setAiExplainOpen(false);
+          goNext();
         }}
         loading={aiExplainLoading}
         text={aiExplainText}

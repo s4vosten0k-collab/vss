@@ -198,7 +198,7 @@ function parseRichBlocks(rawText: string): RichBlock[] {
   return blocks;
 }
 
-function renderTextWithLinks(text: string) {
+export function renderTextWithLinks(text: string) {
   const blocks = parseRichBlocks(text);
 
   if (!blocks.length) {

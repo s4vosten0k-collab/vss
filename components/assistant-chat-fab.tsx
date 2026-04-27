@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { Bot, Sparkles } from "lucide-react";
 import { AssistantChatPanel, PavlikAvatar } from "@/components/assistant-chat-panel";
@@ -16,6 +16,7 @@ export function AssistantChatFab() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const lastPathnameRef = useRef(pathname);
 
   const returnTo = useMemo(() => {
     const q = searchParams.toString();
@@ -36,6 +37,16 @@ export function AssistantChatFab() {
     const q = nextParams.toString();
     router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
   }, [pathname, searchParams, router]);
+
+  useEffect(() => {
+    if (lastPathnameRef.current === pathname) {
+      return;
+    }
+    if (searchParams.get("tab") !== "assistant") {
+      setOpen(false);
+    }
+    lastPathnameRef.current = pathname;
+  }, [pathname, searchParams]);
 
   return (
     <>
